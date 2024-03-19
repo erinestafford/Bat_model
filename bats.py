@@ -19,7 +19,8 @@ def initialize_bats(simulation_parameters):
             'out_sim': np.zeros(n),
             'td': np.zeros(n),
             'energy': np.zeros((n, simulation_parameters['sim_len'])),
-            'fr': 335.4166667,#foraging rate in kJ/hr
+            'fr': 29.16666667,#foraging rate in g/hr
+            'fc': 11.5, #food to energy conversion in kJ/g
             'mr': 146.16, #metabolic rate -  https://besjournals.onlinelibrary.wiley.com/doi/epdf/10.1046/j.1365-2435.2003.00706.x (low end of flying)
             'tc': 146.16*3, #NOT SURE travel cost (flying metabolic rate)  https://besjournals.onlinelibrary.wiley.com/doi/epdf/10.1046/j.1365-2435.2003.00706.x
             'r_mr': 7.308,#resting metabolic rate 1/20th of normal mr -  https://besjournals.onlinelibrary.wiley.com/doi/epdf/10.1046/j.1365-2435.2003.00706.x
@@ -146,13 +147,50 @@ def get_patch_level_forage_hist(b_id):
         patch_hist[i]=len(time_hist[np.where(time_hist == i)])
     return patch_hist
 
+def all_forage(ids,t):
+    global bats
+    metabolic_rate = bats['mr']
+    foraging_rate = bats['fr']
+    energy_conversion = bats['ev']
+    rec_conv = bats['bat_resource_conversion']
+
+    locs = bats['loc'][ids]
+    energies = bats['energy'][ids][t-1]
+
+    bats['tp'][ids] += 1
+    bats['ts'][ids] += 1
+    bats['th'][ids, t] = locs
+
+    avail_rec = patches.patches['resources'][locs]
+    avail_rec[np.where(avail_rec>foraging_rate)] = foraging_rate
+    e_temps = rec_conv * energy_conversion * avail_rec - metabolic_rate
+    bats['energy'][ids][t] = energies+e_temps
+    patches.patches['resources'][locs] = patches.patches['resources'][locs]-avail_rec
+
+    next_e_temps = rec_conv * energy_conversion * foraging_rate - metabolic_rate
+
+    if avail_rec>foraging_rate:
+        e_temp =rec_conv*energy_conversion*foraging_rate-metabolic_rate#* energy#rec_conv * foraging_rate*(1/time_in_cur_patch) - metabolic_rate * energy
+        bats['daily_diet_hist'][b_id] += patches.get_patch_resource_types(loc) * foraging_rate
+        patches.update_used_resources(loc, foraging_rate)
+
+        bats['energy'][b_id][t] = energy + e_temp
+        next_e_temp = rec_conv * energy_conversion*foraging_rate - metabolic_rate#* energy#rec_conv * foraging_rate*(1/(time_in_cur_patch+1)) - metabolic_rate * energy
+    else:
+        e_temp = rec_conv*energy_conversion*avail_rec-metabolic_rate #* energy
+        bats['daily_diet_hist'][b_id] += patches.get_patch_resource_types(loc) * avail_rec
+        patches.update_used_resources(loc, avail_rec)
+
+        bats['energy'][b_id][t] = energy + e_temp
+        next_e_temp = 0
 
 def forage(b_id, t):
     global bats
     loc = bats['loc'][b_id]
     energy = bats['energy'][b_id][t-1]
     metabolic_rate = bats['mr']
-    foraging_rate = bats['fr']
+    foraging_rate = bats['fr']*bats['fc']
+
     bats['tp'][b_id] += 1
     bats['ts'][b_id] += 1
     bats['fh'][b_id].append(loc)
@@ -161,7 +199,7 @@ def forage(b_id, t):
     rec_conv = bats['bat_resource_conversion']
     avail_rec = patches.get_patch_resources(loc)
 
-    if avail_rec>foraging_rate:
+    if avail_rec>=foraging_rate:
         e_temp =rec_conv * foraging_rate- metabolic_rate#* energy#rec_conv * foraging_rate*(1/time_in_cur_patch) - metabolic_rate * energy
         bats['daily_diet_hist'][b_id] += patches.get_patch_resource_types(loc) * foraging_rate
         patches.update_used_resources(loc, foraging_rate)
@@ -169,8 +207,8 @@ def forage(b_id, t):
         bats['energy'][b_id][t] = energy + e_temp
         next_e_temp = rec_conv * foraging_rate - metabolic_rate#* energy#rec_conv * foraging_rate*(1/(time_in_cur_patch+1)) - metabolic_rate * energy
     else:
-        e_temp = rec_conv*avail_rec-metabolic_rate #* energy
-        bats['daily_diet_hist'][b_id] += patches.get_patch_resource_types(loc) * avail_rec
+        e_temp = rec_conv*avail_rec*bats['fc']-metabolic_rate #* energy
+        bats['daily_diet_hist'][b_id] += patches.get_patch_resource_types(loc) * avail_rec*bats['fc']
         patches.update_used_resources(loc, avail_rec)
 
         bats['energy'][b_id][t] = energy + e_temp
@@ -383,7 +421,12 @@ def get_bat_density_map(t):
     bat_mat = np.zeros(bats['sp']['num_p'])
     for p in range(bats['sp']['num_p']):
         bat_mat[p]=len(bats['th'][:, t][np.where(bats['th'][:, t]==p)])
-    plt.imshow(bat_mat.reshape((2,3)))
+    plt.title(str(t/24) + " Days")
+    plt.imshow(bat_mat.reshape((21,23)))
+    plt.colorbar()
+    plt.xticks([])
+    plt.yticks([])
+    plt.show()
 
 
 

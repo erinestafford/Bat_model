@@ -73,6 +73,8 @@ simulation_parameters = {'pop':30,#14000
 
 patches.initialize_patches(patch_net,simulation_parameters)
 bats.initialize_bats(simulation_parameters)
+#bats.get_bat_density_map(0)
+#plt.show()
 for i in range(1,simulation_parameters['sim_len']):
     bats.update_bats(i)
     patches.update_patches(i)
@@ -80,6 +82,7 @@ bats.view_individual_bat_behavior([0])
 plt.show()
 #patches.observe_patches()
 #bats.see_time_spent()
+#bats.get_bat_density_map(i)
 print("done")
 
 
