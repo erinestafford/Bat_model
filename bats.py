@@ -5,8 +5,9 @@ import numpy as np
 
 
 def initialize_bats(simulation_parameters):
-    global bats
+    global bats, sim_time
     n = simulation_parameters['pop']
+    sim_time = 1
 
     bats = {'sp': simulation_parameters,
             'id': np.arange(n),
@@ -19,14 +20,17 @@ def initialize_bats(simulation_parameters):
             'out_sim': np.zeros(n),
             'td': np.zeros(n),
             'energy': np.zeros((n, simulation_parameters['sim_len'])),
+            'energy_cp': np.zeros(n),#energy ggained from current patch
+            'e_discount':0.01,
             'fr': 29.16666667,#foraging rate in g/hr
             'fc': 11.5, #food to energy conversion in kJ/g
             'mr': 146.16, #metabolic rate -  https://besjournals.onlinelibrary.wiley.com/doi/epdf/10.1046/j.1365-2435.2003.00706.x (low end of flying)
-            'tc': 146.16*3, #NOT SURE travel cost (flying metabolic rate)  https://besjournals.onlinelibrary.wiley.com/doi/epdf/10.1046/j.1365-2435.2003.00706.x
-            'r_mr': 7.308,#resting metabolic rate 1/20th of normal mr -  https://besjournals.onlinelibrary.wiley.com/doi/epdf/10.1046/j.1365-2435.2003.00706.x
+            'tc': 146.16*2, #NOT SURE travel cost (flying metabolic rate)  https://besjournals.onlinelibrary.wiley.com/doi/epdf/10.1046/j.1365-2435.2003.00706.x
+            'r_mr': 30,#7.308,#resting metabolic rate 1/20th of normal mr -  https://besjournals.onlinelibrary.wiley.com/doi/epdf/10.1046/j.1365-2435.2003.00706.x
             'bat_resource_conversion': 0.75,
             'loc': np.zeros(n),
             'next_loc': np.zeros(n),
+            'next_state': np.zeros(n),
             'time_to_roost': np.zeros(n),
             'dnp': np.zeros(n),
             'th': np.zeros((n, simulation_parameters['sim_len'])),
@@ -34,14 +38,17 @@ def initialize_bats(simulation_parameters):
             'daily_diet_hist':np.zeros((n, 2)), #hard fruit, soft fruit
             'diet_rec': np.array([2/3,1/3]),
             'roost_locs': np.zeros(n),
-            'max_dist_in_hr': 50.0/30.0 #50 km at 30 km per hour
+            'max_dist_in_hr': 50.0/30.0, #50 km at 30 km per hour
+            'max_food_before_rest': 29.16666667*2,
+            'food_before_rest': np.zeros(n),
+            'smell_dist':10.0/30.0, #max smell dist in hr
      }
 
     assign_bats_to_roost()
     for b_id in bats['id']:
         bats['fh'].append(get_initial_forage_hist(b_id))
 
-    bats['energy'][:,0] = 200*np.ones(n)
+    bats['energy'][:,0] = 500*np.ones(n)
 
 
 def assign_bats_to_roost():
@@ -68,6 +75,8 @@ def get_initial_forage_hist(b_id):
     num_of_type = np.zeros(len(p_types))
     for p in patches_in_range:
         type = patches.get_patch_type_by_id(p)
+        if type == 'Roost':#new
+            type = 'Forest'
         for t in range(len(p_types)):
             if type == p_types[t]:
                 num_of_type[t] += 1
@@ -75,6 +84,8 @@ def get_initial_forage_hist(b_id):
 
     for p in range(len(patches_in_range)):
         type = patches.get_patch_type_by_id(p)
+        if type == 'Roost':#new
+            type = 'Forest'
         for t in range(len(p_types)):
             if type == p_types[t]:
                 patch_probs[p] = p_probs[t]/num_of_type[t]
@@ -88,16 +99,16 @@ def get_random_patch_in_range_with_resources(b_id,t):
     p_probs = bats['sp']['patch_type_forage_probs']
 
     #get patches in foraging range
-    patches_in_range = patches.get_patches_in_range(loc, bats['energy'][b_id,t]*bats['tc'])
+    patches_in_range = patches.get_patches_in_range(loc, bats['max_dist_in_hr'])
     patch_options = np.asarray([p for p in patches_in_range if patches.get_patch_resources(p)>0])
-
-    return random.choices(patch_options,k=1).pop()
+    patch_rec=patches.patches['resources'][patch_options]
+    return random.choices(patch_options,k=1, weights = patch_rec/np.sum(patch_rec)).pop()
 
 
 def get_estars(b_id,t):
     global bats
     loc = bats['loc'][b_id]
-    energy = bats['energy'][b_id][t-1]
+    energy = bats['energy_cp'][b_id]
     time_in_cur_patch = bats['tp'][b_id]
     p = patches.get_loc_in_patch(loc)
     estars = []
@@ -112,19 +123,18 @@ def get_estars(b_id,t):
 
 def get_p_patches(b_id):  # get patch to start foraging in. Later patches chosen based on MVT
     global bats
-    prop_patch = np.zeros(bats['sp']['num_p'])
+    patch_rec = patches.patches['resources']
+    patch_prob = patch_rec/sum(patch_rec)
+
+    visit_patch = np.zeros(bats['sp']['num_p'])
     forage_hist = bats['fh'][b_id]
     for i in range(bats['sp']['num_p']):
-        prop_patch[i] = len(np.where(np.asarray(forage_hist) == i)[0])
-        if patches.get_patch_resources(i) <= 0:
-            prop_patch[i] = 0
+        visit_patch[i] = len(np.where(np.asarray(forage_hist) == i)[0])
 
-    if sum(prop_patch) <= 0:
-        prop_patch = np.asarray([patches.get_patch_resources(i) for i in range(bats['sp']['num_p'])])
-    if sum(prop_patch) <= 0:
-        prop_patch = np.ones(bats['sp']['num_p'])
+    patch_prob[np.where(visit_patch>0)] =patch_prob[np.where(visit_patch>0)]*visit_patch[np.where(visit_patch>0)]
+    patch_prob=patch_prob/np.sum(patch_prob)
 
-    return prop_patch / sum(prop_patch)
+    return patch_prob
 
 
 def change_patch(b_id, new_loc):
@@ -147,43 +157,6 @@ def get_patch_level_forage_hist(b_id):
         patch_hist[i]=len(time_hist[np.where(time_hist == i)])
     return patch_hist
 
-def all_forage(ids,t):
-    global bats
-    metabolic_rate = bats['mr']
-    foraging_rate = bats['fr']
-    energy_conversion = bats['ev']
-    rec_conv = bats['bat_resource_conversion']
-
-    locs = bats['loc'][ids]
-    energies = bats['energy'][ids][t-1]
-
-    bats['tp'][ids] += 1
-    bats['ts'][ids] += 1
-    bats['th'][ids, t] = locs
-
-    avail_rec = patches.patches['resources'][locs]
-    avail_rec[np.where(avail_rec>foraging_rate)] = foraging_rate
-    e_temps = rec_conv * energy_conversion * avail_rec - metabolic_rate
-    bats['energy'][ids][t] = energies+e_temps
-    patches.patches['resources'][locs] = patches.patches['resources'][locs]-avail_rec
-
-    next_e_temps = rec_conv * energy_conversion * foraging_rate - metabolic_rate
-
-    if avail_rec>foraging_rate:
-        e_temp =rec_conv*energy_conversion*foraging_rate-metabolic_rate#* energy#rec_conv * foraging_rate*(1/time_in_cur_patch) - metabolic_rate * energy
-        bats['daily_diet_hist'][b_id] += patches.get_patch_resource_types(loc) * foraging_rate
-        patches.update_used_resources(loc, foraging_rate)
-
-        bats['energy'][b_id][t] = energy + e_temp
-        next_e_temp = rec_conv * energy_conversion*foraging_rate - metabolic_rate#* energy#rec_conv * foraging_rate*(1/(time_in_cur_patch+1)) - metabolic_rate * energy
-    else:
-        e_temp = rec_conv*energy_conversion*avail_rec-metabolic_rate #* energy
-        bats['daily_diet_hist'][b_id] += patches.get_patch_resource_types(loc) * avail_rec
-        patches.update_used_resources(loc, avail_rec)
-
-        bats['energy'][b_id][t] = energy + e_temp
-        next_e_temp = 0
-
 def forage(b_id, t):
     global bats
     loc = bats['loc'][b_id]
@@ -191,34 +164,45 @@ def forage(b_id, t):
     metabolic_rate = bats['mr']
     foraging_rate = bats['fr']*bats['fc']
 
-    bats['tp'][b_id] += 1
-    bats['ts'][b_id] += 1
     bats['fh'][b_id].append(loc)
     bats['fh'][b_id].pop(0)
     bats['th'][b_id, t] = loc
     rec_conv = bats['bat_resource_conversion']
     avail_rec = patches.get_patch_resources(loc)
 
-    if avail_rec>=foraging_rate:
-        e_temp =rec_conv * foraging_rate- metabolic_rate#* energy#rec_conv * foraging_rate*(1/time_in_cur_patch) - metabolic_rate * energy
-        bats['daily_diet_hist'][b_id] += patches.get_patch_resource_types(loc) * foraging_rate
-        patches.update_used_resources(loc, foraging_rate)
+    #food_p = patches.get_patch_find_rec_prob(loc)
+    found_food = 1#random.choices([0, 1], weights=[1 - food_p, food_p]).pop()
 
+    if avail_rec>=bats['fr']:
+        e_temp =found_food *rec_conv * foraging_rate*np.exp(-bats['e_discount']*bats['tp'][b_id])- metabolic_rate#* energy#rec_conv * foraging_rate*(1/time_in_cur_patch) - metabolic_rate * energy
+        #bats['daily_diet_hist'][b_id] += patches.get_patch_resource_types(loc) * foraging_rate
+        bats['energy_cp'][b_id] += e_temp
+        patches.update_used_resources(loc, bats['fr'])
         bats['energy'][b_id][t] = energy + e_temp
-        next_e_temp = rec_conv * foraging_rate - metabolic_rate#* energy#rec_conv * foraging_rate*(1/(time_in_cur_patch+1)) - metabolic_rate * energy
+        bats['food_before_rest'][b_id] += foraging_rate
+
+
+        if patches.get_patch_resources(loc) >= bats['fr']:
+            next_e_temp = found_food*rec_conv * foraging_rate*np.exp(-bats['e_discount']*(bats['tp'][b_id]+1)) - metabolic_rate#* energy#rec_conv * foraging_rate*(1/(time_in_cur_patch+1)) - metabolic_rate * energy
+        else:
+            next_e_temp = found_food*rec_conv*patches.get_patch_resources(loc)*bats['fc']*np.exp(-bats['e_discount']*(bats['tp'][b_id]+1))-metabolic_rate
     else:
-        e_temp = rec_conv*avail_rec*bats['fc']-metabolic_rate #* energy
-        bats['daily_diet_hist'][b_id] += patches.get_patch_resource_types(loc) * avail_rec*bats['fc']
+        e_temp = found_food*rec_conv*avail_rec*bats['fc']*np.exp(-bats['e_discount']*(bats['tp'][b_id]))-metabolic_rate #* energy
+        #bats['daily_diet_hist'][b_id] += patches.get_patch_resource_types(loc) * avail_rec*bats['fc']
+        bats['energy_cp'][b_id] += e_temp
         patches.update_used_resources(loc, avail_rec)
 
         bats['energy'][b_id][t] = energy + e_temp
+        bats['food_before_rest'][b_id] += avail_rec
         next_e_temp = 0
 
-
-    prop_necessary_res_consumed = bats['daily_diet_hist'][b_id]/bats['diet_rec']
+    bats['tp'][b_id] += 1
+    bats['ts'][b_id] += 1
+    #prop_necessary_res_consumed = bats['daily_diet_hist'][b_id]/bats['diet_rec']
 
     #change in next step? - if time
     if bats['ts'][b_id] < 24 - bats['rest_time'] - bats['time_to_roost'][b_id]:
+
         estars = get_estars(b_id,t)
         estar_i = np.argmax(estars)
 
@@ -228,28 +212,23 @@ def forage(b_id, t):
             p_options = p_options[np.where(temp_estar > next_e_temp)]
             p_resources = np.asarray([patches.get_patch_resources(i) for i in p_options]) #only go to patches with resources
             p_options = p_options[np.where(p_resources > 0)]
+            p_resources = np.asarray([patches.get_patch_resources(i) for i in p_options])  # only go to patches with resources
+
+            #using patch history
             patch_hist = get_patch_level_forage_hist(b_id)
             patch_hist = patch_hist[p_options]
-            if sum(patch_hist) > 0:
-                patch_probs = patch_hist / sum(patch_hist)
-            else:
-                patch_probs = np.ones(len(p_options)) / len(p_options)
-            if np.any(prop_necessary_res_consumed>=1) and sum(bats['daily_diet_hist'][b_id])<1: #take diet variability into account
-                enough_res = np.where(prop_necessary_res_consumed>=1)
-                # increase probability of needed resource being consumed
-                for i in range(len(p_options)):
-                    res = patches.get_patch_resource_types(p_options[i])
-                    if res[enough_res]>0 and res[np.where(prop_necessary_res_consumed<1)]==0:
-                        patch_probs[i] = 0
-                if sum(patch_probs) <= 0:
-                    patch_probs = np.ones(len(p_options)) / len(p_options)
-                else:
-                    patch_probs = patch_probs / sum(patch_probs)
+
+            #using smell dist
+            patches_in_range = patches.get_patches_in_range(loc, bats['smell_dist'])
+
+            p_rec = p_resources/np.sum(p_resources)
+            p_rec[np.where(patch_hist>0)] =p_rec[np.where(patch_hist>0)]*patch_hist[np.where(patch_hist>0)]
+
+            p_rec[np.nonzero(np.in1d(p_options,patches_in_range))] = p_rec[np.nonzero(np.in1d(p_options,patches_in_range))] * 10
+            patch_probs = p_rec/np.sum(p_rec)
 
             if len(p_options) >= 1: #check case where only pathces without resources available
                 p_choice = random.choices(p_options, weights=patch_probs, k=1).pop()
-                if patches.patches['patch_type'][p_choice]=='Roost':
-                    print('foraging at home')
                 change_patch(b_id, p_choice)
     else:
         bats['ts'][b_id]=0
@@ -262,10 +241,13 @@ def roost(b_id, t):
     bats['ts'][b_id] += 1
     bats['th'][b_id, t] = bats['loc'][b_id]
     bats['energy'][b_id,t] = bats['energy'][b_id,t-1] - bats['r_mr']#*bats['mr']* energy
+    bats['food_before_rest'][b_id]=0
 
 
 def travel(b_id, new_loc, t):
     global bats
+    bats['food_before_rest'][b_id] = 0
+    bats['energy_cp'][b_id] =0
     bats['next_loc'][b_id] = new_loc
     bats['loc'][b_id] = bats['sp']['num_p']
     bats['ts'][b_id] += 1
@@ -287,12 +269,11 @@ def arrive(b_id, t):
     global bats
     bats['loc'][b_id] = bats['next_loc'][b_id]
     bats['dnp'][b_id] = 0
+    bats['states'][b_id] = bats['next_state'][b_id]
     if bats['loc'][b_id] == bats['roost_locs'][b_id]:
         bats['ts'][b_id] = 0
-        bats['states'][b_id] = 0
         roost(b_id, t)
     else:
-        bats['states'][b_id] = 1
         forage(b_id, t)
 
 
@@ -310,6 +291,7 @@ def travel_to_roost(b_id, t):
     bats['ts'][b_id] = 0
     bats['dnp'][b_id] = bats['time_to_roost'][b_id]
     bats['states'][b_id] = 2
+    bats['next_state'][b_id]=0
     bats['next_loc'][b_id] = bats['roost_locs'][b_id]
     bats['loc'][b_id] = bats['sp']['num_p']
     bats['time_to_roost'][b_id] = 0
@@ -320,6 +302,7 @@ def start_foraging(b_id, t):
     global bats
     bats['ts'][b_id] = 0
     bats['states'][b_id] = 2
+    bats['next_state'][b_id] = 1
     patch_probs = get_p_patches(b_id)
     if sum(bats['energy'][b_id][t-24:t])<0: #if not getting enough energy go to other patches
         for p in bats['fh'][b_id][24:]:
@@ -329,17 +312,29 @@ def start_foraging(b_id, t):
     else:
         patch_probs = patch_probs/sum(patch_probs)
         patch_choice = random.choices(np.arange(bats['sp']['num_p']), patch_probs).pop()
-
+    #trying ideal free
+    #patch_choice = np.argmax(patches.patches['resources'])
     bats['dnp'][b_id] = patches.get_time_to_next_patch(int(bats['loc'][b_id]), patch_choice)
     bats['time_to_roost'][b_id] = patches.get_time_to_next_patch(int(patch_choice), bats['roost_locs'][b_id])
     bats['next_loc'][b_id] = patch_choice
     bats['loc'][b_id] = bats['sp']['num_p']
     travel(b_id,bats['next_loc'][b_id], t)
 
+def resting(b_id,t):
+    global bats
+    bats['ts'][b_id] += 1
+    bats['tp'][b_id] += 1
+    bats['th'][b_id, t] = bats['loc'][b_id]
+    bats['energy'][b_id, t] = bats['energy'][b_id, t - 1] - bats['r_mr']  # *bats['mr']* energy
+    bats['food_before_rest'][b_id]= 0
 
 def update_bats(t):
     global bats
     # update foraging bats
+    for b_id in bats['id']: #find where energy and th not being updated
+        bats['energy'][b_id][t]=bats['energy'][b_id][t-1]
+        bats['th'][b_id][t] = bats['th'][b_id][t - 1]
+
     if t%24==0:
         [travel_to_roost(b, t) for b in bats['id'] if (bats['next_loc'][b]!= bats['roost_locs'][b])]
     else:
@@ -349,10 +344,15 @@ def update_bats(t):
 
         if len(foraging)>0:
             not_time_to_roost = bats['id'][np.where(bats['ts'] < 24 - bats['rest_time'] - bats['time_to_roost'])]
-            keep_foraging = np.asarray([b_id for b_id in foraging if b_id in not_time_to_roost])
+            #max_food = bats['id'][np.where(bats['food_before_rest']>=bats['max_food_before_rest'])]
+            keep_foraging = np.asarray([b_id for b_id in foraging if (b_id in not_time_to_roost)])# and (b_id not in max_food)])
             [forage(b, t) for b in keep_foraging]
             done_foraging = np.asarray([b_id for b_id in foraging if b_id not in not_time_to_roost])
             [travel(b,bats['roost_locs'][b] , t) for b in done_foraging]
+            #[resting(b_id,t) for b_id in max_food]
+
+            #'max_food_before_rest': 29.16666667 * 2,
+            #'food_before_rest': np.zeros(n),
 
         if len(roosting) > 0:
             keep_roosting = [b_id for b_id in roosting if bats['ts'][b_id] < bats['rest_time']]
@@ -422,11 +422,12 @@ def get_bat_density_map(t):
     for p in range(bats['sp']['num_p']):
         bat_mat[p]=len(bats['th'][:, t][np.where(bats['th'][:, t]==p)])
     plt.title(str(t/24) + " Days")
-    plt.imshow(bat_mat.reshape((21,23)))
+    plt.imshow(bat_mat.reshape((10,10)))
     plt.colorbar()
     plt.xticks([])
     plt.yticks([])
     plt.show()
+    return bat_mat
 
 
 

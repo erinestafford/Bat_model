@@ -18,8 +18,17 @@ def initialize_patches(patch_net,simulation_parameters):  # need to input patch 
                'patch_coord': np.asarray([patch_net[i]['patch_center'] for i in range(num_p)]),
                'patch_type':[patch_net[i]['Name'] for i in range(num_p)],
                'num_p': num_p,
-               'res_type':[patch_net[i]['Res'] for i in range(num_p)]
+               'res_type':[patch_net[i]['Res'] for i in range(num_p)],
+               'color_map':{ 'Roost': np.array([255, 255, 255]),
+             'Orchard': np.array([172, 188, 45]),
+             'Forest': np.array([14, 121, 18]),
+             'Forest': np.array([30, 191, 121]),
+             'Residential': np.array([218, 92, 105]),
+             'Dump': np.array([243, 171, 105]),
+             'Water Body': np.array([77, 159, 220]),
+}
                 }
+    patches['max_rec']=np.max(patches['resources'])
     for i in patch_net.keys():
         patches['resource_history'][i,0] = patches['resources'][i]
 
@@ -38,6 +47,14 @@ def get_patch_names():
 def get_patch_resources(patch_id):
     global patches
     return patches['resources'][int(patch_id)]
+
+def get_patch_find_rec_prob(patch_id):
+    global patches
+    if patches['resources'][int(patch_id)]>np.mean(patches['resources']):
+        return 1
+    else:
+        return np.exp(-patches['resources'][int(patch_id)]/np.mean(patches['resources']))
+
 
 def get_patch_resource_types(patch_id):
     global patches
