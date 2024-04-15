@@ -17,9 +17,10 @@ with open('test_big_patch_net.pkl', 'rb') as f:
 simulation_parameters = {'pop':100,#14000
                          'patch_types_options': ['Roost', 'Residential', 'Orchard', 'Water Body', 'Forest', 'Dump'],
                          'num_p': len(patch_net.keys()),
+                         'gp':[0.5,0.5],
                          'grid_scale': [1,1],
                          'patch_type_forage_probs': np.array([0.0, 0.53710742, 0.26605321, 0.06561312, 0.06561312, 0.06561313]),
-                         'sim_len': 24*30}
+                         'sim_len': 24*20}
 
 patches.initialize_patches(patch_net,simulation_parameters)
 bats.initialize_bats(simulation_parameters)
