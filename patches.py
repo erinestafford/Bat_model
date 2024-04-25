@@ -2,6 +2,9 @@ import test_bat
 import matplotlib.pyplot as plt
 import numpy as np
 import random
+import matplotlib.animation as animation
+import matplotlib.cm as cm
+from matplotlib.ticker import (AutoMinorLocator, MultipleLocator)
 
 class patch:
     pass
@@ -12,7 +15,9 @@ def initialize_patches(patch_net,simulation_parameters):  # need to input patch 
     patches = {'id':np.arange(num_p),
                'resources': np.asarray([patch_net[i]['init_resources'] for i in range(num_p)]),
                'resource_regen_rate': np.asarray([patch_net[i]['resource_birth'] for i in range(num_p)]),
-               'carrying_capacity': np.asarray([patch_net[i]['carrying_capacity'] for i in range(num_p)]),
+               'max_cc': np.asarray([patch_net[i]['max_cc'] for i in range(num_p)]),
+               'yearly_cc': np.asarray([patch_net[i]['carrying_capacity_yr'] for i in range(num_p)]),
+               'carrying_capacity': np.zeros((num_p,simulation_parameters['sim_len'])),
                'resource_history': np.zeros((num_p,simulation_parameters['sim_len'])),
                'grid_scale':simulation_parameters['grid_scale'], #in km
                'patch_coord': np.asarray([patch_net[i]['patch_center'] for i in range(num_p)]),
@@ -20,25 +25,30 @@ def initialize_patches(patch_net,simulation_parameters):  # need to input patch 
                'num_p': num_p,
                'res_type':[patch_net[i]['Res'] for i in range(num_p)],
                'color_map':{ 'Roost': np.array([255, 255, 255]),
-             'Orchard': np.array([172, 188, 45]),
-             'Forest': np.array([14, 121, 18]),
-             'Forest': np.array([30, 191, 121]),
-             'Residential': np.array([218, 92, 105]),
-             'Dump': np.array([243, 171, 105]),
-             'Water Body': np.array([77, 159, 220]),
-}
+                             'Orchard': np.array([172, 188, 45]),
+                             'Forest': np.array([30, 191, 121]),
+                             'Residential': np.array([218, 92, 105]),
+                             'Dump': np.array([243, 171, 105]),
+                             'Water Body': np.array([77, 159, 220])},
+               'sp': simulation_parameters
                 }
+    assign_seasonal_cc()
     patches['max_rec']=np.max(patches['resources'])
     for i in patch_net.keys():
         patches['resource_history'][i,0] = patches['resources'][i]
 
+def assign_seasonal_cc():
+    global patches
+    temp = np.tile(patches['yearly_cc'],patches['sp']['sim_len']//365*24 + 1)
+    patches['carrying_capacity'] = temp[:,0:patches['sp']['sim_len']]
+
+
 def update_patches(t):
     global patches
-    new_resources = patches['resources'] * (patches['resource_regen_rate'] * (1 - patches['resources'] / patches['carrying_capacity']))
+    new_resources = patches['resources'] * (patches['resource_regen_rate'] * (1 - patches['resources'] / patches['carrying_capacity'][:,t]))
     patches['resources'] = patches['resources'] + new_resources
     if len(patches['resources'][np.where(patches['resources'] < 0)])>0:
         patches['resources'][np.where(patches['resources'] < 0)] = 0
-        print('here')
     patches['resource_history'][:,t] = patches['resources']
 
 def get_patch_names():
@@ -182,3 +192,31 @@ def get_patches_in_range(p_id, max_dist):
         if dist <= max_dist:
             patches_in_range.append(p)
     return np.asarray(patches_in_range)
+
+
+def rec_grid_over_time(d):
+    global patches, rec, title, r,c
+    r= d[0]
+    c = d[1]
+
+    fig, ax = plt.subplots()
+    ax.set(xlim=[0, r], ylim=[0, c])
+    ax.grid(which='major', alpha=0.5)
+    ax.xaxis.set_major_locator(MultipleLocator(1))
+    ax.yaxis.set_major_locator(MultipleLocator(1))
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
+    rec = ax.imshow(patches['resource_history'][:,0].reshape(c,r))
+    title = ax.text(0.5,1, "",transform=ax.transAxes, ha="center")
+
+    ani = animation.FuncAnimation(fig=fig, func=lambda frame: animation_update(frame), frames=patches['sp']['sim_len'], interval=1)
+    writervideo = animation.FFMpegWriter(fps=60)
+    ani.save('test_patches.mp4', writer=writervideo)
+    plt.close()
+    #plt.show()
+
+def animation_update(frame):
+    global rec,title,r,c
+    rec.set_array(patches['resource_history'][:, frame].reshape(c, r))
+    title.set_text(np.round(frame/24,2))
+    return rec

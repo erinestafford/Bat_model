@@ -272,12 +272,12 @@ def forage(b_arr,t):
         bats['food_before_roost'][b_plenty] += bats['fr'][b_plenty,t]
 
     if len(b_lacking)>0:
-        e_temp = rec_conv * (avail_rec[np.where(avail_rec < bats['fr'][b_lacking,t])] * bats['fc']) * np.exp(-bats['e_discount'] * bats['tp'][b_lacking] - bats['e_discount']*other_bats_in_loc[bl_ind]) - bats['mr'][b_lacking,t]
+        e_temp = rec_conv * (avail_rec[np.where(avail_rec <np.max(bats['fr'][b_arr,t]))] * bats['fc']) * np.exp(-bats['e_discount'] * bats['tp'][b_lacking] - bats['e_discount']*other_bats_in_loc[bl_ind]) - bats['mr'][b_lacking,t]
         bats['energy_cp'][b_lacking] += e_temp
-        bats['energy_cr'][b_plenty] += e_temp
+        bats['energy_cr'][b_lacking] += e_temp
         patches.update_used_resources(bats['loc'][b_lacking], bats['fr'][b_lacking,t])
         bats['energy'][b_lacking, t] = bats['energy'][b_lacking, t - 1] + e_temp
-        bats['food_before_roost'][b_lacking] += avail_rec[np.where(avail_rec < bats['fr'][b_arr,t])]
+        bats['food_before_roost'][b_lacking] += avail_rec[np.where(avail_rec < np.max(bats['fr'][b_arr,t]))]
 
     #next expected resources
     next_e_temp = np.zeros(len(b_arr))
@@ -323,7 +323,7 @@ def make_decisions(b_arr,next_e_temp,t):
             for k in range(len(to_switch)):
                 #options for bat
                 temp=np.where(estar_switch[k,:]>0)[0]
-                if len(temp)>0:
+                if len(temp)>0 and np.max(patches.patches['resources'][temp])>0:
                     #resources in options
                     p_op_rec=patches.patches['resources'][temp]
 
@@ -546,10 +546,10 @@ def bat_on_grid_over_time(b_arr, d):
     title = ax.text(0.5,1, "",transform=ax.transAxes, ha="center")
 
     ani = animation.FuncAnimation(fig=fig, func=lambda frame: animation_update(frame, b_arr), frames=bats['sp']['sim_len'], interval=1)
-    #writervideo = animation.FFMpegWriter(fps=10)
-    #ani.save('test.mp4', writer=writervideo)
-    #plt.close()
-    plt.show()
+    writervideo = animation.FFMpegWriter(fps=60)
+    ani.save('test_bat.mp4', writer=writervideo)
+    plt.close()
+    #plt.show()
 
 def animation_update(frame, b_arr):
     global scat,title, colors#, rec, n_row, n_c
