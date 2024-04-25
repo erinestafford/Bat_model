@@ -1,4 +1,4 @@
-import bats
+import test_bat
 import matplotlib.pyplot as plt
 import numpy as np
 import random
@@ -37,6 +37,7 @@ def update_patches(t):
     new_resources = patches['resources'] * (patches['resource_regen_rate'] * (1 - patches['resources'] / patches['carrying_capacity']))
     patches['resources'] = patches['resources'] + new_resources
     if len(patches['resources'][np.where(patches['resources'] < 0)])>0:
+        patches['resources'][np.where(patches['resources'] < 0)] = 0
         print('here')
     patches['resource_history'][:,t] = patches['resources']
 
@@ -46,7 +47,7 @@ def get_patch_names():
 
 def get_patch_resources(patch_id):
     global patches
-    return patches['resources'][int(patch_id)]
+    return patches['resources'][patch_id.astype(int)]
 
 def get_patch_find_rec_prob(patch_id):
     global patches
@@ -62,7 +63,7 @@ def get_patch_resource_types(patch_id):
 
 def update_used_resources(patch_id, used_resources):
     global patches
-    patches['resources'][int(patch_id)] -=used_resources
+    patches['resources'][patch_id.astype(int)] =patches['resources'][patch_id.astype(int)]-used_resources
 
 def get_time_to_next_patch(p1,p2):
     center1 = patches['patch_coord'][int(p1)]
@@ -78,14 +79,32 @@ def get_time_to_next_patch(p1,p2):
     return (np.sqrt((x2-x1)**2 + (y2-y1)**2))/30
 
 
-def get_loc_in_patch(p):
-    center= patches['patch_coord'][int(p)]
+def get_loc_in_patch(p_ids):
     #randomly pick a location withing each grid space
-    x = np.random.choice(np.linspace(center[0]-patches['grid_scale'][0]/2,center[0]+patches['grid_scale'][0]/2,20))
-    y = np.random.choice(np.linspace(center[1] - patches['grid_scale'][1]/2, center[1] + patches['grid_scale'][1]/2, 20))
+    xs = []
+    ys = []
+    for p in p_ids:
+        if p < patches['num_p']:
+            center=patches['patch_coord'][p.astype(int)]
+            xs.append(random.choices(np.linspace(center[0] - patches['grid_scale'][0] / 2, center[0] + patches['grid_scale'][0] / 2, 100)).pop())
+            ys.append(random.choices(np.linspace(center[1] - patches['grid_scale'][0] / 2, center[1] + patches['grid_scale'][0] / 2, 100)).pop())
+        else:
+            xs.append(-5)
+            ys.append(-5)
 
     #get distance in hours between those points - https://en.wikipedia.org/wiki/Pteropus
-    return [x,y]
+    return np.array([xs,ys])
+
+def get_time_to_other_points(p_id):
+    p = patches['patch_coord'][p_id.astype(int)]
+    x = p[0]
+    y = p[1]
+    centers_xs = patches['patch_coord'][:,0]
+    centers_ys = patches['patch_coord'][:,1]
+    other_xs = random.choices(np.linspace(centers_xs-patches['grid_scale'][0]/2,centers_xs+patches['grid_scale'][0]/2,20))
+    other_ys = random.choices(np.linspace(centers_ys - patches['grid_scale'][0] / 2, centers_ys + patches['grid_scale'][0] / 2, 20))
+
+    return (np.sqrt((other_xs - x) ** 2 + (other_ys - y) ** 2)) / test_bat.bats['avg_speed']
 
 def get_time_to_next_point(p1,p2):
     center2 = patches['patch_coord'][int(p2)]
@@ -134,7 +153,20 @@ def get_patch_type_ids(type):
 def get_patch_type_by_id(p_id):
     global patches
     return patches['patch_type'][p_id]
-
+def get_patches_in_smell_range(p_ids, loc):
+    #patches.get_patches_in_smell_range(temp, bats['loc'][to_switch[k]]) out of options which in range
+    #get center of patch p_id
+    in_range=np.zeros(len(p_ids))
+    centers = patches['patch_coord'][p_ids.astype(int)]
+    xs = centers[:,0]
+    ys = centers[:,1]
+    cur_center=patches['patch_coord'][int(loc)]
+    x = cur_center[0]
+    y = cur_center[1]
+    dists = np.sqrt((xs-x)**2 + (ys-y)**2)
+    max_dist=test_bat.bats['smell_dist']
+    in_range[np.where(dists <= max_dist)] = 1
+    return in_range
 def get_patches_in_range(p_id, max_dist):
     #get center of patch p_id
     center = patches['patch_coord'][int(p_id)]

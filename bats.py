@@ -42,6 +42,7 @@ def initialize_bats(simulation_parameters):
             'max_food_before_roost': 29.16666667*11.5*5, #3 foraging trips
             'food_before_roost': np.zeros(n),
             'smell_dist':10.0/30.0, #max smell dist in hr
+            'avg_speed':30.0,
             'gender': np.zeros(n) #0 -> Male, 1 -> female
      }
 
@@ -61,8 +62,8 @@ def assign_gender():
     #fr, r_mr, mr,max_dist_in_hr
     #increasing these for females
     bats['fr'] += bats['gender']*bats['fr']
-    bats['r_mr'] += bats['gender']*bats['r_mr']/2
-    bats['mr'] += bats['gender']* bats['mr']/2
+    #bats['r_mr'] += bats['gender']*bats['r_mr']/2
+    #bats['mr'] += bats['gender']* bats['mr']/2
 
     #decreasing this for females
     bats['max_dist_in_hr'] -=bats['gender']*((40/30)*np.ones(bats['sp']['pop']))
