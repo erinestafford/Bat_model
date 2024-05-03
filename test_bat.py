@@ -14,7 +14,7 @@ def initialize_bats(simulation_parameters):
 
     bats = {'sp': simulation_parameters,
             'id': np.arange(n),
-            'states': np.zeros(n),  # 0=roosting, 1=foraging, 2=traveling, 3=feeding children
+            'states': np.zeros(n),  # 0=roosting, 1=foraging, 2=traveling, 3=feeding children, 4=dead
             'tp': np.zeros(n),  # time_in_cur_patch
             'tr':np.zeros(n),  #time in current roost
             'tt': np.zeros(n),  # time_traveling
@@ -22,10 +22,10 @@ def initialize_bats(simulation_parameters):
             'energy_next': np.zeros(n),
             'energy_cp': np.zeros(n),  #energy gained from current patch
             'energy_cr': np.zeros(n),  # energy gained from current roost
-            'e_discount':0.01,
+            'e_discount':0.05,
             'fr': 29.16666667*np.ones((n, simulation_parameters['sim_len'])),  #foraging rate in g/hr
             'fc': 11.5,  #food to energy conversion in kJ/g
-            'mr': 146.16*np.ones((n, simulation_parameters['sim_len'])),  #metabolic rate -  https://besjournals.onlinelibrary.wiley.com/doi/epdf/10.1046/j.1365-2435.2003.00706.x (low end of flying)
+            'mr': (146.16/2)*np.ones((n, simulation_parameters['sim_len'])), #146.16 #metabolic rate -  https://besjournals.onlinelibrary.wiley.com/doi/epdf/10.1046/j.1365-2435.2003.00706.x (low end of flying)
             'tc': 146.16*np.ones(n),  #NOT SURE travel cost (flying metabolic rate)  https://besjournals.onlinelibrary.wiley.com/doi/epdf/10.1046/j.1365-2435.2003.00706.x
             'r_mr': 7.308*np.ones((n, simulation_parameters['sim_len'])),  #7.308,#resting metabolic rate 1/20th of normal mr -  https://besjournals.onlinelibrary.wiley.com/doi/epdf/10.1046/j.1365-2435.2003.00706.x
             'bat_resource_conversion': 0.75,
@@ -49,7 +49,8 @@ def initialize_bats(simulation_parameters):
             'preg_state': np.zeros((n, simulation_parameters['sim_len'])),  # 0 -> not pregnant, #1 pregnant
             'avg_speed': 30.0,
             'visits_per_patch':np.zeros((n,simulation_parameters['num_p'])),
-            'roost_each_day':np.zeros((n, int(simulation_parameters['sim_len']/24)))
+            'roost_each_day':np.zeros((n, int(simulation_parameters['sim_len']/24))),
+            'd_th': -1000.0 #bats death threshold
             }
 
     assign_bats_to_roost()
@@ -60,7 +61,7 @@ def initialize_bats(simulation_parameters):
         for p in range(bats['sp']['num_p']):
             bats['visits_per_patch'][b_id,p] += len(np.where(temp==p)[0])
     bats['fh']=np.asarray(bats['fh'])
-    bats['energy'][:,0] = 1000*np.ones(n)
+    bats['energy'][:,0] = 2000*np.ones(n)
 
 def assign_gender():
     global bats
@@ -99,8 +100,8 @@ def assign_gender():
     #fr, r_mr, mr,max_dist_in_hr
     #increasing these for females - with young
     bats['fr'] = bats['fr']+bats['preg_state']*bats['fr']+bats['young_state']*bats['fr'] #doubling foraging rate when pregnant or feeding
-    bats['r_mr'] = bats['r_mr']+bats['young_state']*bats['r_mr']/2+ bats['preg_state']*bats['r_mr']/2 #increasing resting metabolic rate for mothers
-    bats['mr'] = bats['mr'] + bats['young_state']*bats['mr']/2+ bats['preg_state']*bats['mr']/2 #increasing normal metabolic rate for mothers
+    bats['r_mr'] = bats['r_mr']+bats['young_state']*bats['r_mr']/2+bats['preg_state']*bats['r_mr']/2 #increasing resting metabolic rate for mothers
+    #bats['mr'] = bats['mr'] + bats['young_state']*bats['mr']/2+ bats['preg_state']*bats['mr']/2 #increasing normal metabolic rate for mothers
 
     #decreasing this for females - with young
     bats['max_dist_in_hr'] =bats['max_dist_in_hr'] - bats['young_state']*((40/30))
@@ -114,6 +115,7 @@ def assign_bats_to_roost():
     else:
         bats['roost_locs'] = np.array(random.choices(roost_options, k=bats['sp']['pop']))
 
+    bats['roost_locs']= bats['roost_locs'].astype(float)
     bats['loc'] = np.copy(bats['roost_locs'])
     bats['th'][:, 0] = np.copy(bats['roost_locs'])
     bats['roost_each_day'][:,0]= np.copy(bats['roost_locs'])
@@ -153,6 +155,7 @@ def get_initial_forage_hist(b_id):
 def update_bats(t):
     global bats
     bats['prev_loc']=bats['loc']
+    #check_dead(t)
     if t%12==0 and t%24!=0: #start foraging
         time_to_forage(t)
     elif t%24==0: #start roosting
@@ -160,24 +163,42 @@ def update_bats(t):
     else: #continue what  you were doing
         continue_on(t)
 
-def time_to_roost(t): #TODO: add descision for roost shifting
+def check_dead(t):
+    global bats
+    dead = bats['id'][np.where(bats['energy'][:,t-1] <= bats['d_th'])]
+    if len(dead)>0:
+        bats['states'][dead] = 4
+        bats['energy'][dead,t:] = np.nan
+        bats['loc'][dead] = np.nan
+        bats['next_loc'][dead] = np.nan
+        bats['prev_loc'][dead] = np.nan
+        bats['next_state'][dead] = np.nan
+        bats['time_to_roost'][dead]= np.nan
+        bats['dnp'][dead]= np.nan
+        bats['th'][dead,t:]= np.nan
+        bats['roost_locs'][dead]=np.nan
+
+def time_to_roost(t):
     global bats
     #Determine if individual bats should change roost (does it need to be a group?)
     # Need energy gained in current roost -> bats['energy_cr']
     # Need expected energy gain (hour or foraging) -> record this when calculated in previous foraging step? bats['energy_next']
     # Need time in current roost -> bats['tr']
     # Need travel cost to new roost and time - check all roost options
+    not_dead= bats['id'][np.where(bats['states']!=4)]
     bats_to_switch = []
     bats_to_switch_unique=[]
-    estars=np.zeros((bats['sp']['pop'],len(bats['roost_options'])))
+    estars=np.zeros((len(not_dead),len(bats['roost_options'])))
     count=0
     for i in bats['roost_options']:
-        travel_locs = bats['prev_loc'].copy()
-        travel_locs[np.where(travel_locs == bats['sp']['num_p'])]=bats['next_loc'][np.where(travel_locs == bats['sp']['num_p'])]
+        travel_locs = bats['prev_loc'][not_dead].copy()
+        nl = bats['next_loc'][not_dead]
+        travel_locs[np.where(travel_locs == bats['sp']['num_p'])]=nl[np.where(travel_locs == bats['sp']['num_p'])]
         tts= np.array([patches.get_time_to_next_patch(p,i) for p in travel_locs])#calculate travel_times
-        estars[:,count] =(bats['energy_cr'] - bats['tc']*tts)/(bats['tr'] + tts)
-        bats_to_switch.append(np.where(estars[:,count]>bats['energy_next'])[0])
-        bats_to_switch[count] = bats_to_switch[count][np.where(bats['roost_locs'][bats_to_switch[count]] != i)]
+        estars[:,count] =(bats['energy_cr'][not_dead] - bats['tc'][not_dead]*tts)/(bats['tr'][not_dead] + tts)
+        bats_to_switch.append(np.where(estars[:,count]>bats['energy_next'][not_dead])[0])
+        rl = bats['roost_locs'][not_dead]
+        bats_to_switch[count] = bats_to_switch[count][np.where(rl[bats_to_switch[count]] != i)]
         for b in bats_to_switch[count]:
             if b not in bats_to_switch_unique:
                 bats_to_switch_unique.append(b)
@@ -193,8 +214,8 @@ def time_to_roost(t): #TODO: add descision for roost shifting
         bats['energy_cr'][b]=0
 
 
-    bats['next_loc'] = bats['roost_locs'].copy()
-    bats['next_state'] = np.zeros(bats['sp']['pop'])
+    bats['next_loc'][not_dead] = bats['roost_locs'][not_dead].copy()
+    bats['next_state'][not_dead] = np.zeros(len(not_dead))
     not_roosting = bats['id'][np.where(bats['loc'] != bats['roost_locs'])]
     already_roosting = bats['id'][np.where(bats['loc'] == bats['roost_locs'])]
 
@@ -229,7 +250,8 @@ def travel(B_arr,t):
     global bats
     bats['energy_cp'][B_arr] = np.zeros(len(B_arr))
     # energy updates
-    bats['energy'][B_arr,t] =bats['energy'][B_arr,t-1] - bats['tc'][B_arr] * np.stack((bats['dnp'][B_arr], np.ones(len(B_arr)))).min(axis=0)
+    tc = bats['tc'][B_arr] + 1*bats['tc'][B_arr]*bats['gender'][B_arr]
+    bats['energy'][B_arr,t] =bats['energy'][B_arr,t-1] - tc * np.stack((bats['dnp'][B_arr], np.ones(len(B_arr)))).min(axis=0)
     bats['th'][B_arr, t] = bats['sp']['num_p']
 
     #other updates
@@ -258,42 +280,71 @@ def forage(b_arr,t):
     avail_rec = patches.get_patch_resources(locs)
     other_bats_in_loc = np.array([len(np.where(locs==loc)[0]) for loc in locs])-1
 
-    bp_ind = np.where(avail_rec >=bats['fr'][b_arr,t])
-    b_plenty = b_arr[bp_ind]
+    all_fr = 2*bats['fr'][b_arr,t]/(1+0.25**(-bats['energy'][b_arr, t - 1]/2000))
+    foraged_rec = np.array([min([all_fr[i], avail_rec[i]]) for i in range(len(b_arr))])
+    e_temp2 = rec_conv * (foraged_rec* bats['fc']) * np.exp(-bats['e_discount'] * bats['tp'][b_arr] - bats['e_discount'] * other_bats_in_loc) - bats['mr'][b_arr, t]
+    bats['energy_cp'][b_arr] += e_temp2
+    bats['energy_cr'][b_arr] += e_temp2
+    patches.update_used_resources(bats['loc'][b_arr], foraged_rec)
+    bats['energy'][b_arr, t] = bats['energy'][b_arr, t - 1] + e_temp2
+    bats['food_before_roost'][b_arr] += bats['fr'][b_arr, t]
 
-    bl_ind = np.where(avail_rec < np.max(bats['fr'][b_arr,t]))
-    b_lacking = b_arr[bl_ind]
-    if len(b_plenty) > 0:
-        e_temp = rec_conv*(bats['fr'][b_plenty,t]*bats['fc'])* np.exp(-bats['e_discount'] * bats['tp'][b_plenty] - bats['e_discount']*other_bats_in_loc[bp_ind]) - bats['mr'][b_plenty,t]
-        bats['energy_cp'][b_plenty] += e_temp
-        bats['energy_cr'][b_plenty] += e_temp
-        patches.update_used_resources(bats['loc'][b_plenty], bats['fr'][b_plenty,t])
-        bats['energy'][b_plenty,t] = bats['energy'][b_plenty, t - 1] + e_temp
-        bats['food_before_roost'][b_plenty] += bats['fr'][b_plenty,t]
+    #bp_ind = np.where(avail_rec >=bats['fr'][b_arr,t])
+   # b_plenty = b_arr[bp_ind]
 
-    if len(b_lacking)>0:
-        e_temp = rec_conv * (avail_rec[np.where(avail_rec <np.max(bats['fr'][b_arr,t]))] * bats['fc']) * np.exp(-bats['e_discount'] * bats['tp'][b_lacking] - bats['e_discount']*other_bats_in_loc[bl_ind]) - bats['mr'][b_lacking,t]
-        bats['energy_cp'][b_lacking] += e_temp
-        bats['energy_cr'][b_lacking] += e_temp
-        patches.update_used_resources(bats['loc'][b_lacking], bats['fr'][b_lacking,t])
-        bats['energy'][b_lacking, t] = bats['energy'][b_lacking, t - 1] + e_temp
-        bats['food_before_roost'][b_lacking] += avail_rec[np.where(avail_rec < np.max(bats['fr'][b_arr,t]))]
+    #bl_ind = np.where(avail_rec < np.max(bats['fr'][b_arr,t]))
+    #b_lacking = b_arr[bl_ind]
+
+    #if len(b_plenty) > 0:
+    #    e_temp_bp = e_temp2[bp_ind]#rec_conv*(bats['fr'][b_plenty,t]*bats['fc'])* np.exp(-bats['e_discount'] * bats['tp'][b_plenty] - bats['e_discount']*other_bats_in_loc[bp_ind]) - bats['mr'][b_plenty,t]
+    #    bats['energy_cp'][b_plenty] += e_temp_bp
+    #    bats['energy_cr'][b_plenty] += e_temp_bp
+    #    patches.update_used_resources(bats['loc'][b_plenty], bats['fr'][b_plenty,t])
+    #    bats['energy'][b_plenty,t] = bats['energy'][b_plenty, t - 1] + e_temp_bp
+    #    bats['food_before_roost'][b_plenty] += bats['fr'][b_plenty,t]
+
+    #if len(b_lacking)>0:
+    #    e_temp = e_temp2[bl_ind]#rec_conv * (avail_rec[np.where(avail_rec <np.max(bats['fr'][b_arr,t]))] * bats['fc']) * np.exp(-bats['e_discount'] * bats['tp'][b_lacking] - bats['e_discount']*other_bats_in_loc[bl_ind]) - bats['mr'][b_lacking,t]
+    #    bats['energy_cp'][b_lacking] += e_temp
+    #    bats['energy_cr'][b_lacking] += e_temp
+    #    patches.update_used_resources(bats['loc'][b_lacking], bats['fr'][b_lacking,t])
+    #    bats['energy'][b_lacking, t] = bats['energy'][b_lacking, t - 1] + e_temp
+    #    bats['food_before_roost'][b_lacking] += avail_rec[np.where(avail_rec < np.max(bats['fr'][b_arr,t]))]
 
     #next expected resources
-    next_e_temp = np.zeros(len(b_arr))
-    avail_rec = patches.get_patch_resources(locs)
-    bp_ind = np.where(avail_rec >= bats['fr'][b_arr,t])
-    bl_ind = np.where(avail_rec < bats['fr'][b_arr,t])
-    b_plenty = b_arr[bp_ind]
-    b_lacking = b_arr[bl_ind]
-    next_e_temp[np.where(avail_rec >= bats['fr'][b_arr,t])] = rec_conv * (bats['fr'][b_plenty,t] * bats['fc']) * np.exp(
-        -bats['e_discount'] * bats['tp'][b_plenty] - bats['e_discount']*other_bats_in_loc[bp_ind]) - bats['mr'][b_plenty,t]
-    next_e_temp[np.where(avail_rec < bats['fr'][b_arr,t])] = rec_conv * (avail_rec[np.where(avail_rec < bats['fr'][b_arr,t])] * bats['fc']) * np.exp(
-        -bats['e_discount'] * bats['tp'][b_lacking] - bats['e_discount']*other_bats_in_loc[bl_ind ]) - bats['mr'][b_lacking,t]
+    #next_e_temp = np.zeros(len(b_arr))
+    #avail_rec_next = patches.get_patch_resources(locs)
+    #bp_ind_next = np.where(avail_rec_next >= bats['fr'][b_arr,t])
+    #bl_ind_next = np.where(avail_rec_next < bats['fr'][b_arr,t])
+    #b_plenty = b_arr[bp_ind_next]
+    #b_lacking = b_arr[bl_ind_next]
+    #next_e_temp[np.where(avail_rec_next >= bats['fr'][b_arr,t])] = rec_conv * (bats['fr'][b_plenty,t] * bats['fc']) * np.exp(
+    #    -bats['e_discount'] * bats['tp'][b_plenty] - bats['e_discount']*other_bats_in_loc[bp_ind_next]) - bats['mr'][b_plenty,t]
+    #next_e_temp[np.where(avail_rec_next < bats['fr'][b_arr,t])] = rec_conv * (avail_rec_next[np.where(avail_rec_next < bats['fr'][b_arr,t])] * bats['fc']) * np.exp(
+    #    -bats['e_discount'] * bats['tp'][b_lacking] - bats['e_discount']*other_bats_in_loc[bl_ind_next]) - bats['mr'][b_lacking,t]
+
+    #all_fr = bats['fr'][b_arr, t]  # 2*bats['fr'][b_arr,t]/(1+0.25**(-bats['energy'][b_arr, t - 1]/10000))
+    #foraged_rec = np.array([min([all_fr[i], avail_rec[i]]) for i in range(len(b_arr))])
+    #e_temp2 = rec_conv * (foraged_rec* bats['fc']) * np.exp(-bats['e_discount'] * bats['tp'][b_arr] - bats['e_discount'] * other_bats_in_loc) - bats['mr'][b_arr, t]
+    #          rec_conv * (bats['fr'][b_plenty, t] * bats['fc']) * np.exp(-bats['e_discount'] * bats['tp'][b_plenty] - bats['e_discount'] * other_bats_in_loc[bp_ind]) - bats['mr'][b_plenty, t]
+
+    #bats['energy_cp'][b_arr] += e_temp
+    #bats['energy_cr'][b_arr] += e_temp
+    #patches.update_used_resources(bats['loc'][b_arr], bats['fr'][b_arr, t])
+    #bats['energy'][b_arr, t] = bats['energy'][b_arr, t - 1] + e_temp
+    #bats['food_before_roost'][b_arr] += bats['fr'][b_arr, t]
+
+    #next expected resources
+    avail_rec_next = patches.get_patch_resources(locs)
+    foraged_rec_next = np.array([min([all_fr[i], avail_rec_next[i]]) for i in range(len(b_arr))])
+    next_e_temp = rec_conv * (foraged_rec_next * bats['fc']) * np.exp(
+        -bats['e_discount'] * bats['tp'][b_arr] - bats['e_discount'] * other_bats_in_loc) - bats['mr'][b_arr, t]
 
     bats['tp'][b_arr] += 1
-    bats['energy_next'][b_arr]=next_e_temp
-    make_decisions(b_arr,next_e_temp,t)
+    bats['energy_next'][b_arr] = next_e_temp
+    make_decisions(b_arr, next_e_temp, t)
+
+
 
 
 
@@ -442,15 +493,18 @@ def get_bats_in_patch(p):
 
 def time_to_forage(t):
     #bats will start foraging for the day
+    not_dead = bats['id'][np.where(bats['states']!=4)]
     patch_rec = patches.patches['resources']
     rec_prob = patch_rec / sum(patch_rec)
     choices = np.zeros(bats['sp']['pop'])
     dists = np.zeros(bats['sp']['pop'])
     d_r = np.zeros(bats['sp']['pop'])
-    for b_id in bats['id']:
+    for b_id in not_dead:
         patch_probs = get_p_patches(rec_prob,b_id)
         choice = random.choices(np.arange(bats['sp']['num_p']),weights=patch_probs, k=1).pop()
         bats['visits_per_patch'][b_id, choice] +=1
+        if np.isnan(bats['roost_locs'][b_id]):
+            print('here')
         dists[b_id] = patches.get_time_to_next_patch(int(bats['roost_locs'][b_id]), choice)
         choices[b_id]=int(choice)
         d_r[b_id] = patches.get_time_to_next_patch(int(choice), bats['roost_locs'][b_id])
@@ -565,3 +619,17 @@ def animation_update(frame, b_arr):
     #rec.set_array(patches.patches['resource_history'][:, frame].reshape(n_row, n_c))
     title.set_text(np.round(frame/24,2))
     return scat
+
+def see_individual_roosting_behavior(b_ids, roost_locs):
+    global bats
+    for b in b_ids:
+        temp = np.asarray(bats['roost_each_day'][b, :])
+        type_list = np.zeros(len(temp))
+        for t in range(len(temp)):
+            for p in range(len(roost_locs)):
+                if temp[t] == roost_locs[p]:
+                    type_list[t] = p
+        plt.scatter(np.arange(bats['sp']['sim_len']/24),type_list)
+    plt.xlabel("Days")
+    plt.yticks(np.arange(len(roost_locs)))
+    plt.show()
