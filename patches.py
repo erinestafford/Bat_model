@@ -105,16 +105,19 @@ def get_loc_in_patch(p_ids):
     #get distance in hours between those points - https://en.wikipedia.org/wiki/Pteropus
     return np.array([xs,ys])
 
-def get_time_to_other_points(p_id):
+def get_time_to_other_points(p_id): #TODO
     p = patches['patch_coord'][p_id.astype(int)]
     x = p[0]
     y = p[1]
     centers_xs = patches['patch_coord'][:,0]
     centers_ys = patches['patch_coord'][:,1]
-    other_xs = random.choices(np.linspace(centers_xs-patches['grid_scale'][0]/2,centers_xs+patches['grid_scale'][0]/2,20))
-    other_ys = random.choices(np.linspace(centers_ys - patches['grid_scale'][0] / 2, centers_ys + patches['grid_scale'][0] / 2, 20))
+    other_xs = np.zeros(len(centers_xs))
+    other_ys = np.zeros(len(centers_ys))
+    for i in range(len(patches['id'])):
+        other_xs[i] = random.choice(np.linspace(centers_xs[i]-patches['grid_scale'][0]/2,centers_xs[i]+patches['grid_scale'][0]/2,20))
+        other_ys[i] = random.choice(np.linspace(centers_ys[i] - patches['grid_scale'][0] / 2, centers_ys[i] + patches['grid_scale'][0] / 2, 20))
 
-    return (np.sqrt((other_xs - x) ** 2 + (other_ys - y) ** 2)) / test_bat.bats['avg_speed']
+    return (np.sqrt((centers_xs - x) ** 2 + (centers_ys - y) ** 2)) / test_bat.bats['avg_speed']#(np.sqrt((other_xs - x) ** 2 + (other_ys - y) ** 2)) / test_bat.bats['avg_speed']
 
 def get_time_to_next_point(p1,p2):
     center2 = patches['patch_coord'][int(p2)]

@@ -19,12 +19,13 @@ def initialize_bats(simulation_parameters):
             'tr':np.zeros(n),  #time in current roost
             'tt': np.zeros(n),  # time_traveling
             'energy': np.zeros((n, simulation_parameters['sim_len'])),
+            'dist_traveled':np.zeros((n, simulation_parameters['sim_len'])),
             'energy_next': np.zeros(n),
             'energy_cp': np.zeros(n),  #energy gained from current patch
             'energy_cr': np.zeros(n),  # energy gained from current roost
             'e_discount':0.05,
             'fr': 29.16666667*np.ones((n, simulation_parameters['sim_len'])),  #foraging rate in g/hr
-            'fc': 11.5,  #food to energy conversion in kJ/g
+            'fc': 17,  #food to energy conversion in kJ/g
             'mr': (146.16/2)*np.ones((n, simulation_parameters['sim_len'])), #146.16 #metabolic rate -  https://besjournals.onlinelibrary.wiley.com/doi/epdf/10.1046/j.1365-2435.2003.00706.x (low end of flying)
             'tc': 146.16*np.ones(n),  #NOT SURE travel cost (flying metabolic rate)  https://besjournals.onlinelibrary.wiley.com/doi/epdf/10.1046/j.1365-2435.2003.00706.x
             'r_mr': 7.308*np.ones((n, simulation_parameters['sim_len'])),  #7.308,#resting metabolic rate 1/20th of normal mr -  https://besjournals.onlinelibrary.wiley.com/doi/epdf/10.1046/j.1365-2435.2003.00706.x
@@ -263,6 +264,7 @@ def travel(B_arr,t):
     bats['loc'][arrived] = bats['next_loc'][arrived]
     bats['dnp'][arrived] = 0
 
+
 def roost(b_arr,t):
     global bats
     bats['energy'][b_arr, t] =bats['energy'][b_arr, t-1]-bats['r_mr'][b_arr,t]
@@ -280,8 +282,8 @@ def forage(b_arr,t):
     avail_rec = patches.get_patch_resources(locs)
     other_bats_in_loc = np.array([len(np.where(locs==loc)[0]) for loc in locs])-1
 
-    all_fr = 2*bats['fr'][b_arr,t]/(1+0.25**(-bats['energy'][b_arr, t - 1]/2000))
-    foraged_rec = np.array([min([all_fr[i], avail_rec[i]]) for i in range(len(b_arr))])
+    all_fr = 2*bats['fr'][b_arr,t]/(1+0.25**(-bats['energy'][b_arr, t - 1]/5000))
+    foraged_rec = np.array([min([all_fr[i], avail_rec[i]]) for i in range(len(b_arr))]) #2*29.16666667 is max fr
     e_temp2 = rec_conv * (foraged_rec* bats['fc']) * np.exp(-bats['e_discount'] * bats['tp'][b_arr] - bats['e_discount'] * other_bats_in_loc) - bats['mr'][b_arr, t]
     bats['energy_cp'][b_arr] += e_temp2
     bats['energy_cr'][b_arr] += e_temp2
@@ -390,17 +392,23 @@ def make_decisions(b_arr,next_e_temp,t):
                     w_temp[np.where(p_op_smell > 0)] = w_temp[np.where(p_op_smell > 0)] * 10
                     w_temp = w_temp/sum(w_temp)
                     p_choice = random.choices(temp, weights=w_temp, k=1).pop()
+                    # to visualize patch choice
+                    #test = np.zeros(20*20)
+                    #test[temp] = w_temp
+                    #plt.imshow(test.reshape(20,20))
+                    #plt.colorbar()
                     bats['visits_per_patch'][to_switch[k], p_choice] += 1
-                    change_patch(to_switch[k], p_choice)
+                    change_patch(to_switch[k], p_choice,t)
     if len(feed_young)>0:
         travel_to_roost_feed_young(feed_young, t)
     if len(go_home)>0:
         travel_to_roost(go_home,t)
 
-def change_patch(b_id, new_loc):
+def change_patch(b_id, new_loc,t):
     global bats
     loc = bats['loc'][b_id]
     bats['dnp'][b_id] = patches.get_time_to_next_patch(loc, new_loc)
+    bats['dist_traveled'][b_id, t] += bats['dnp'][b_id] * bats['avg_speed']
     bats['states'][b_id] = 2
     bats['next_loc'][b_id] = new_loc
     bats['loc'][b_id] = bats['sp']['num_p']
@@ -411,6 +419,7 @@ def change_patch(b_id, new_loc):
 def travel_to_roost(b_id, t):
     global bats
     bats['dnp'][b_id.astype(int)] = bats['time_to_roost'][b_id.astype(int)]
+    bats['dist_traveled'][b_id, t] += bats['dnp'][b_id] * bats['avg_speed']
     bats['states'][b_id.astype(int)] = 2
     bats['next_state'][b_id.astype(int)] = 0
     bats['next_loc'][b_id.astype(int)] = bats['roost_locs'][b_id.astype(int)]
@@ -419,6 +428,7 @@ def travel_to_roost(b_id, t):
 def travel_to_roost_feed_young(b_id, t):
     global bats
     bats['dnp'][b_id.astype(int)] = bats['time_to_roost'][b_id.astype(int)]
+    bats['dist_traveled'][b_id, t] += bats['dnp'][b_id] * bats['avg_speed']
     bats['states'][b_id.astype(int)] = 2
     bats['next_state'][b_id.astype(int)] = 3
     bats['next_loc'][b_id.astype(int)] = bats['roost_locs'][b_id.astype(int)]
@@ -449,7 +459,7 @@ def feed_young(b_id, t):
             w_temp[np.where(p_op_vis > 0)] = w_temp[np.where(p_op_vis > 0)] * p_op_vis[np.where(p_op_vis > 0)]
             w_temp = w_temp / sum(w_temp)
             p_choice = random.choices(patches.patches['id'], weights=w_temp, k=1).pop()
-            change_patch(b_ids[k], p_choice)
+            change_patch(b_ids[k], p_choice,t)
 
 
 def get_patch_level_forage_hist(b_id):
@@ -465,6 +475,8 @@ def get_estars(b_arr,t):
     locs = bats['loc'][b_arr]
     energy = bats['energy_cp'][b_arr].reshape((len(b_arr),1))* np.ones((1, bats['sp']['num_p']))
     time_in_cur_patch = bats['tp'][b_arr].reshape((len(b_arr),1))* np.ones((1, bats['sp']['num_p']))
+    for b in range(len(b_arr)):
+        time_in_cur_patch[b, int(locs[b])] = 1.0
     t_all_p=np.array([patches.get_time_to_other_points(loc) for loc in locs]).reshape((len(b_arr),bats['sp']['num_p']))
     tc = bats['tc'][b_arr].reshape((len(b_arr), 1)) * np.ones((1, bats['sp']['num_p']))*t_all_p
     estars = (energy - tc)/(t_all_p + time_in_cur_patch)
