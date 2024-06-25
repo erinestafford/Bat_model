@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib.animation as animation
 import matplotlib.cm as cm
 from matplotlib.ticker import (AutoMinorLocator, MultipleLocator)
+import time
 
 
 def initialize_bats(simulation_parameters):
@@ -15,6 +16,8 @@ def initialize_bats(simulation_parameters):
     bats = {'sp': simulation_parameters,
             'id': np.arange(n),
             'states': np.zeros(n),  # 0=roosting, 1=foraging, 2=traveling, 3=feeding children, 4=dead
+            'disease_states': np.zeros(n), # 0=susceptible, 1=infected, 2=recovered
+            'cumulative_infected': np.zeros(simulation_parameters['sim_len']),
             'tp': np.zeros(n),  # time_in_cur_patch
             'tr':np.zeros(n),  #time in current roost
             'tt': np.zeros(n),  # time_traveling
@@ -56,6 +59,7 @@ def initialize_bats(simulation_parameters):
 
     assign_bats_to_roost()
     assign_gender()
+    initialize_disease()
     for b_id in bats['id']:
         temp=np.asarray(get_initial_forage_hist(b_id))
         bats['fh'].append(temp)
@@ -64,6 +68,11 @@ def initialize_bats(simulation_parameters):
     bats['fh']=np.asarray(bats['fh'])
     bats['energy'][:,0] = 2000*np.ones(n)
 
+def initialize_disease():
+    global bats
+    init_inf = random.choices(bats['id'], k=bats['sp']['init_inf'])
+    bats['disease_states'][init_inf] = 1
+    bats['cumulative_infected'][0] = bats['sp']['init_inf']
 def assign_gender():
     global bats
     pm = bats['sp']['gp'][0]
@@ -158,11 +167,45 @@ def update_bats(t):
     bats['prev_loc']=bats['loc']
     #check_dead(t)
     if t%12==0 and t%24!=0: #start foraging
+        #t1 = time.time()
         time_to_forage(t)
+        #t2 = time.time()
+        #print("start foraging:", t2-t1)
     elif t%24==0: #start roosting
+        #t1 = time.time()
         time_to_roost(t)
+        #t2 = time.time()
+        #print("start roosting:",t2 - t1)
     else: #continue what  you were doing
+        #t1 = time.time()
         continue_on(t)
+        #t2 = time.time()
+        #print("continuing:", t2 - t1)
+    update_disease(t)
+
+def update_disease(t):
+    global bats
+    #TODO
+    # check location of sick bats
+    # check susceptible bats in those locations
+    # infect susceptible bats with given probability
+    # recover infected bats with some probability
+
+    sick_ind = np.where(bats['disease_states']==1)
+    sick_locs = bats['loc'][sick_ind]
+    bats_in_sick_locs = []
+    for i in np.unique(sick_locs):
+        bats_in_sick_locs+=list(bats['id'][np.where(bats['loc']==i)])
+    bats_in_sick_locs = np.array(bats_in_sick_locs)
+    sus_bats = bats['id'][np.where(bats['disease_states'] == 0)]
+    can_infect = np.intersect1d(bats_in_sick_locs,sus_bats)
+    infect_decisions = random.choices([1,0], weights = [bats['sp']['beta'], 1-bats['sp']['beta']],k = len(can_infect))
+    bats['disease_states'][can_infect] = infect_decisions
+    bats['cumulative_infected'][t] = bats['cumulative_infected'][t-1]+sum(infect_decisions)
+
+    recover_decisions = random.choices([2, 1], weights=[bats['sp']['gamma'], 1 - bats['sp']['gamma']], k=len(sick_ind))
+    bats['disease_states'][sick_ind] = recover_decisions
+
 
 def check_dead(t):
     global bats
@@ -290,51 +333,6 @@ def forage(b_arr,t):
     patches.update_used_resources(bats['loc'][b_arr], foraged_rec)
     bats['energy'][b_arr, t] = bats['energy'][b_arr, t - 1] + e_temp2
     bats['food_before_roost'][b_arr] += bats['fr'][b_arr, t]
-
-    #bp_ind = np.where(avail_rec >=bats['fr'][b_arr,t])
-   # b_plenty = b_arr[bp_ind]
-
-    #bl_ind = np.where(avail_rec < np.max(bats['fr'][b_arr,t]))
-    #b_lacking = b_arr[bl_ind]
-
-    #if len(b_plenty) > 0:
-    #    e_temp_bp = e_temp2[bp_ind]#rec_conv*(bats['fr'][b_plenty,t]*bats['fc'])* np.exp(-bats['e_discount'] * bats['tp'][b_plenty] - bats['e_discount']*other_bats_in_loc[bp_ind]) - bats['mr'][b_plenty,t]
-    #    bats['energy_cp'][b_plenty] += e_temp_bp
-    #    bats['energy_cr'][b_plenty] += e_temp_bp
-    #    patches.update_used_resources(bats['loc'][b_plenty], bats['fr'][b_plenty,t])
-    #    bats['energy'][b_plenty,t] = bats['energy'][b_plenty, t - 1] + e_temp_bp
-    #    bats['food_before_roost'][b_plenty] += bats['fr'][b_plenty,t]
-
-    #if len(b_lacking)>0:
-    #    e_temp = e_temp2[bl_ind]#rec_conv * (avail_rec[np.where(avail_rec <np.max(bats['fr'][b_arr,t]))] * bats['fc']) * np.exp(-bats['e_discount'] * bats['tp'][b_lacking] - bats['e_discount']*other_bats_in_loc[bl_ind]) - bats['mr'][b_lacking,t]
-    #    bats['energy_cp'][b_lacking] += e_temp
-    #    bats['energy_cr'][b_lacking] += e_temp
-    #    patches.update_used_resources(bats['loc'][b_lacking], bats['fr'][b_lacking,t])
-    #    bats['energy'][b_lacking, t] = bats['energy'][b_lacking, t - 1] + e_temp
-    #    bats['food_before_roost'][b_lacking] += avail_rec[np.where(avail_rec < np.max(bats['fr'][b_arr,t]))]
-
-    #next expected resources
-    #next_e_temp = np.zeros(len(b_arr))
-    #avail_rec_next = patches.get_patch_resources(locs)
-    #bp_ind_next = np.where(avail_rec_next >= bats['fr'][b_arr,t])
-    #bl_ind_next = np.where(avail_rec_next < bats['fr'][b_arr,t])
-    #b_plenty = b_arr[bp_ind_next]
-    #b_lacking = b_arr[bl_ind_next]
-    #next_e_temp[np.where(avail_rec_next >= bats['fr'][b_arr,t])] = rec_conv * (bats['fr'][b_plenty,t] * bats['fc']) * np.exp(
-    #    -bats['e_discount'] * bats['tp'][b_plenty] - bats['e_discount']*other_bats_in_loc[bp_ind_next]) - bats['mr'][b_plenty,t]
-    #next_e_temp[np.where(avail_rec_next < bats['fr'][b_arr,t])] = rec_conv * (avail_rec_next[np.where(avail_rec_next < bats['fr'][b_arr,t])] * bats['fc']) * np.exp(
-    #    -bats['e_discount'] * bats['tp'][b_lacking] - bats['e_discount']*other_bats_in_loc[bl_ind_next]) - bats['mr'][b_lacking,t]
-
-    #all_fr = bats['fr'][b_arr, t]  # 2*bats['fr'][b_arr,t]/(1+0.25**(-bats['energy'][b_arr, t - 1]/10000))
-    #foraged_rec = np.array([min([all_fr[i], avail_rec[i]]) for i in range(len(b_arr))])
-    #e_temp2 = rec_conv * (foraged_rec* bats['fc']) * np.exp(-bats['e_discount'] * bats['tp'][b_arr] - bats['e_discount'] * other_bats_in_loc) - bats['mr'][b_arr, t]
-    #          rec_conv * (bats['fr'][b_plenty, t] * bats['fc']) * np.exp(-bats['e_discount'] * bats['tp'][b_plenty] - bats['e_discount'] * other_bats_in_loc[bp_ind]) - bats['mr'][b_plenty, t]
-
-    #bats['energy_cp'][b_arr] += e_temp
-    #bats['energy_cr'][b_arr] += e_temp
-    #patches.update_used_resources(bats['loc'][b_arr], bats['fr'][b_arr, t])
-    #bats['energy'][b_arr, t] = bats['energy'][b_arr, t - 1] + e_temp
-    #bats['food_before_roost'][b_arr] += bats['fr'][b_arr, t]
 
     #next expected resources
     avail_rec_next = patches.get_patch_resources(locs)
@@ -475,13 +473,11 @@ def get_estars(b_arr,t):
     locs = bats['loc'][b_arr]
     energy = bats['energy_cp'][b_arr].reshape((len(b_arr),1))* np.ones((1, bats['sp']['num_p']))
     time_in_cur_patch = bats['tp'][b_arr].reshape((len(b_arr),1))* np.ones((1, bats['sp']['num_p']))
-    for b in range(len(b_arr)):
-        time_in_cur_patch[b, int(locs[b])] = 1.0
-    t_all_p=np.array([patches.get_time_to_other_points(loc) for loc in locs]).reshape((len(b_arr),bats['sp']['num_p']))
+    t_all_p=patches.patches['tbp'][locs.astype(int),:]
+    #np.array([patches.get_time_to_other_points(loc) for loc in locs]).reshape((len(b_arr),bats['sp']['num_p']))
     tc = bats['tc'][b_arr].reshape((len(b_arr), 1)) * np.ones((1, bats['sp']['num_p']))*t_all_p
     estars = (energy - tc)/(t_all_p + time_in_cur_patch)
-    for b in range(len(b_arr)):
-        estars[b, int(locs[b])] = -np.inf
+    estars[:, locs.astype(int)] = -np.inf
     return estars
 
 

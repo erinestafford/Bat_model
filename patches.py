@@ -30,12 +30,14 @@ def initialize_patches(patch_net,simulation_parameters):  # need to input patch 
                              'Residential': np.array([218, 92, 105]),
                              'Dump': np.array([243, 171, 105]),
                              'Water Body': np.array([77, 159, 220])},
-               'sp': simulation_parameters
+               'sp': simulation_parameters,
+               'tbp': np.zeros((num_p,num_p))#time between patches
                 }
     assign_seasonal_cc()
     patches['max_rec']=np.max(patches['resources'])
     for i in patch_net.keys():
         patches['resource_history'][i,0] = patches['resources'][i]
+        patches['tbp'][i,:] = get_time_to_other_points(i)
 
 def assign_seasonal_cc():
     global patches
@@ -106,18 +108,18 @@ def get_loc_in_patch(p_ids):
     return np.array([xs,ys])
 
 def get_time_to_other_points(p_id): #TODO
-    p = patches['patch_coord'][p_id.astype(int)]
+    p = patches['patch_coord'][p_id]
     x = p[0]
     y = p[1]
     centers_xs = patches['patch_coord'][:,0]
     centers_ys = patches['patch_coord'][:,1]
-    other_xs = np.zeros(len(centers_xs))
-    other_ys = np.zeros(len(centers_ys))
-    for i in range(len(patches['id'])):
-        other_xs[i] = random.choice(np.linspace(centers_xs[i]-patches['grid_scale'][0]/2,centers_xs[i]+patches['grid_scale'][0]/2,20))
-        other_ys[i] = random.choice(np.linspace(centers_ys[i] - patches['grid_scale'][0] / 2, centers_ys[i] + patches['grid_scale'][0] / 2, 20))
+    #other_xs = np.zeros(len(centers_xs))
+    #other_ys = np.zeros(len(centers_ys))
+    #for i in range(len(patches['id'])):
+    #    other_xs[i] = random.choice(np.linspace(centers_xs[i]-patches['grid_scale'][0]/2,centers_xs[i]+patches['grid_scale'][0]/2,20))
+    #    other_ys[i] = random.choice(np.linspace(centers_ys[i] - patches['grid_scale'][0] / 2, centers_ys[i] + patches['grid_scale'][0] / 2, 20))
 
-    return (np.sqrt((centers_xs - x) ** 2 + (centers_ys - y) ** 2)) / test_bat.bats['avg_speed']#(np.sqrt((other_xs - x) ** 2 + (other_ys - y) ** 2)) / test_bat.bats['avg_speed']
+    return (np.sqrt((centers_xs - x) ** 2 + (centers_ys - y) ** 2)) / 30.0#test_bat.bats['avg_speed']#(np.sqrt((other_xs - x) ** 2 + (other_ys - y) ** 2)) / test_bat.bats['avg_speed']
 
 def get_time_to_next_point(p1,p2):
     center2 = patches['patch_coord'][int(p2)]
@@ -180,6 +182,7 @@ def get_patches_in_smell_range(p_ids, loc):
     max_dist=test_bat.bats['smell_dist']
     in_range[np.where(dists <= max_dist)] = 1
     return in_range
+    
 def get_patches_in_range(p_id, max_dist):
     #get center of patch p_id
     center = patches['patch_coord'][int(p_id)]
