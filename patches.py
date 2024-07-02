@@ -9,43 +9,46 @@ from matplotlib.ticker import (AutoMinorLocator, MultipleLocator)
 class patch:
     pass
 
-def initialize_patches(patch_net,simulation_parameters):  # need to input patch network
+def initialize_patches(patch_net,simulation_parameters):
+    # initializing patch dictionary using patch network
     global patches
     num_p = len(patch_net.keys())
-    patches = {'id':np.arange(num_p),
-               'resources': np.asarray([patch_net[i]['init_resources'] for i in range(num_p)]),
-               'resource_regen_rate': np.asarray([patch_net[i]['resource_birth'] for i in range(num_p)]),
-               'max_cc': np.asarray([patch_net[i]['max_cc'] for i in range(num_p)]),
-               'yearly_cc': np.asarray([patch_net[i]['carrying_capacity_yr'] for i in range(num_p)]),
-               'carrying_capacity': np.zeros((num_p,simulation_parameters['sim_len'])),
-               'resource_history': np.zeros((num_p,simulation_parameters['sim_len'])),
+    patches = {'id':np.arange(num_p), #array of patch ids that are used for indexing
+               'resources': np.asarray([patch_net[i]['init_resources'] for i in range(num_p)]), #stores current patch resources
+               'resource_regen_rate': np.asarray([patch_net[i]['resource_birth'] for i in range(num_p)]), #stores resource regeneration rate for each patch
+               'yearly_cc': np.asarray([patch_net[i]['carrying_capacity_yr'] for i in range(num_p)]), #yearly carrying capacity of patch
+               'carrying_capacity': np.zeros((num_p,simulation_parameters['sim_len'])), #section of yearly_cc relevant to our simulation
+               'resource_history': np.zeros((num_p,simulation_parameters['sim_len'])), #stores patch resources over the whole simulation
                'grid_scale':simulation_parameters['grid_scale'], #in km
-               'patch_coord': np.asarray([patch_net[i]['patch_center'] for i in range(num_p)]),
-               'patch_type':[patch_net[i]['Name'] for i in range(num_p)],
-               'num_p': num_p,
-               'res_type':[patch_net[i]['Res'] for i in range(num_p)],
+               'patch_coord': np.asarray([patch_net[i]['patch_center'] for i in range(num_p)]), #patch location on grid
+               'patch_type':[patch_net[i]['Name'] for i in range(num_p)], #type of each patch forest, water body, residential, etc.
+               'num_p': num_p, #number of patches on grid
+               'res_type':[patch_net[i]['Res'] for i in range(num_p)], #type of resources in each patch (not used now, but could be used to assign nutritional value)
                'color_map':{ 'Roost': np.array([255, 255, 255]),
                              'Orchard': np.array([172, 188, 45]),
                              'Forest': np.array([30, 191, 121]),
                              'Residential': np.array([218, 92, 105]),
                              'Dump': np.array([243, 171, 105]),
-                             'Water Body': np.array([77, 159, 220])},
-               'sp': simulation_parameters,
+                             'Water Body': np.array([77, 159, 220])}, #for plotting
+               'sp': simulation_parameters, #storing the overall simulationn parameters
                'tbp': np.zeros((num_p,num_p))#time between patches
                 }
+    #getting carying capacity for just the simulation time frame
     assign_seasonal_cc()
-    patches['max_rec']=np.max(patches['resources'])
+    #initializing resource history and pre-calculating time between patches
     for i in patch_net.keys():
         patches['resource_history'][i,0] = patches['resources'][i]
         patches['tbp'][i,:] = get_time_to_other_points(i)
 
 def assign_seasonal_cc():
+    # getting carying capacity for just the simulation time frame
     global patches
     temp = np.tile(patches['yearly_cc'],patches['sp']['sim_len']//365*24 + 1)
     patches['carrying_capacity'] = temp[:,0:patches['sp']['sim_len']]
 
 
 def update_patches(t):
+    #update  patch resources. Resources consumed by bats are removed in the bat class
     global patches
     new_resources = patches['resources'] * (patches['resource_regen_rate'] * (1 - patches['resources'] / patches['carrying_capacity'][:,t]))
     patches['resources'] = patches['resources'] + new_resources
@@ -107,7 +110,7 @@ def get_loc_in_patch(p_ids):
     #get distance in hours between those points - https://en.wikipedia.org/wiki/Pteropus
     return np.array([xs,ys])
 
-def get_time_to_other_points(p_id): #TODO
+def get_time_to_other_points(p_id): #TODO: doing using center and removing stochasticity for speed
     p = patches['patch_coord'][p_id]
     x = p[0]
     y = p[1]
