@@ -1,10 +1,6 @@
 import test_bat
-import matplotlib.pyplot as plt
 import numpy as np
 import random
-import matplotlib.animation as animation
-import matplotlib.cm as cm
-from matplotlib.ticker import (AutoMinorLocator, MultipleLocator)
 
 class patch:
     pass
@@ -22,8 +18,11 @@ def initialize_patches(patch_net,simulation_parameters):
                'grid_scale':simulation_parameters['grid_scale'], #in km
                'patch_coord': np.asarray([patch_net[i]['patch_center'] for i in range(num_p)]), #patch location on grid
                'patch_type':[patch_net[i]['Name'] for i in range(num_p)], #type of each patch forest, water body, residential, etc.
+               'patch_type_numerical':np.array([patch_net[i]['p_type'] for i in range(num_p)]),
+               'forest_edge':np.asarray([patch_net[i]['forrest_edge'] for i in range(num_p)]),
+               'water_prox': np.asarray([patch_net[i]['water_prox'] for i in range(num_p)]),
                'num_p': num_p, #number of patches on grid
-               'res_type':[patch_net[i]['Res'] for i in range(num_p)], #type of resources in each patch (not used now, but could be used to assign nutritional value)
+               #'res_type':[patch_net[i]['Res'] for i in range(num_p)], #type of resources in each patch (not used now, but could be used to assign nutritional value)
                'color_map':{ 'Roost': np.array([255, 255, 255]),
                              'Orchard': np.array([172, 188, 45]),
                              'Forest': np.array([30, 191, 121]),
@@ -31,7 +30,7 @@ def initialize_patches(patch_net,simulation_parameters):
                              'Dump': np.array([243, 171, 105]),
                              'Water Body': np.array([77, 159, 220])}, #for plotting
                'sp': simulation_parameters, #storing the overall simulationn parameters
-               'tbp': np.zeros((num_p,num_p))#time between patches
+               'tbp': np.array([patch_net[i]['dist'] for i in range(num_p)])#np.zeros((num_p,num_p))#time between patches
                 }
     #getting carying capacity for just the simulation time frame
     assign_seasonal_cc()
@@ -79,6 +78,7 @@ def get_patch_resource_types(patch_id):
 def update_used_resources(patch_id, used_resources):
     global patches
     patches['resources'][patch_id.astype(int)] =patches['resources'][patch_id.astype(int)]-used_resources
+    patches['resources'][np.where(patches['resources']<0)]=0
 
 def get_time_to_next_patch(p1,p2):
     center1 = patches['patch_coord'][int(p1)]
@@ -172,18 +172,10 @@ def get_patch_type_by_id(p_id):
     global patches
     return patches['patch_type'][p_id]
 def get_patches_in_smell_range(p_ids, loc):
-    #patches.get_patches_in_smell_range(temp, bats['loc'][to_switch[k]]) out of options which in range
-    #get center of patch p_id
-    in_range=np.zeros(len(p_ids))
-    centers = patches['patch_coord'][p_ids.astype(int)]
-    xs = centers[:,0]
-    ys = centers[:,1]
-    cur_center=patches['patch_coord'][int(loc)]
-    x = cur_center[0]
-    y = cur_center[1]
-    dists = np.sqrt((xs-x)**2 + (ys-y)**2)
+    #patches.get_patches_in_smell_range
+    in_range=np.zeros((len(loc),patches['num_p']))
     max_dist=test_bat.bats['smell_dist']
-    in_range[np.where(dists <= max_dist)] = 1
+    in_range[np.where(patches['tbp'][loc[loc<patches['num_p']].astype(int),:] <= max_dist)] = 1
     return in_range
     
 def get_patches_in_range(p_id, max_dist):
@@ -229,3 +221,19 @@ def animation_update(frame):
     rec.set_array(patches['resource_history'][:, frame].reshape(c, r))
     title.set_text(np.round(frame/24,2))
     return rec
+
+
+def see_patch_types():
+    global patches
+    p_types = np.array(patches['sp']['patch_types_options'])
+    props = np.zeros(len(p_types))
+
+    for p in patches['id']:
+        props[np.where(patches['patch_type'][p]==p_types)] +=1
+
+    props = props/patches['sp']['num_p']
+    plt.scatter(np.arange(len(p_types)), props, color='r')
+    plt.xticks(np.arange(len(p_types)), p_types)
+    plt.ylabel('Patch Type proportions')
+    plt.show()
+    print(props)

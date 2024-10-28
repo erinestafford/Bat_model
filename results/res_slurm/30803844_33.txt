@@ -1,0 +1,2 @@
+/pfs/proj/nobackup/fs/projnb10/hpc2n2023-026/bat_distribution/Bat_model/test_bat.py:270: RuntimeWarning: divide by zero encountered in divide
+  [temp.append((bats['energy_cr'][not_dead] - bats['tc'][not_dead]*tts[i,:])/(bats['tr'][not_dead] + tts[i,:])) for i in range(len(bats['roost_options']))]

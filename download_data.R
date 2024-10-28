@@ -38,17 +38,23 @@ tb <- legend[, c('Value', 'Label')]
 colnames(tb)[1] = "ID"
 tb$Label <- substr(tb$Label, 1,10)
 levels(thai_data) <- tb
-
+#13.50525, 101.16525 WL
+#13.589239,101.033786 R2
+#13.722306,101.201861 WP
 library(rasterVis)
-w10 <- thai_data[6700:8700,8000:10000, drop=FALSE]
+w10 <- thai_data[5500:6500,3000:5000, drop=FALSE]
 levelplot(w10, col.regions=legend$col)
+
+w10.raster.aggregate <- aggregate(w10, fact=34, fun = 'modal')
+res(w10.raster.aggregate)
+levelplot(w10.raster.aggregate, col.regions=legend$col)
 
 writeRaster(w10,'test.tif',options=c('TFW=YES'),overwrite=TRUE)
 
-#library(terra)
-#m <- as.matrix(w10, wide = TRUE)
-#dim(m)
-#write.csv(m, "Thai_LU_data.csv")
+library(terra)
+m <- as.matrix(w10.raster.aggregate, wide = TRUE)
+dim(m)
+write.csv(m, "Thai_LU_data.csv")
 
 
 #thai_data2 =raster("test.tif")

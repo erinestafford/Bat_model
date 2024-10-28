@@ -1,11 +1,8 @@
 import random
 import patches
-import matplotlib.pyplot as plt
 import numpy as np
-import matplotlib.animation as animation
-import matplotlib.cm as cm
-from matplotlib.ticker import (AutoMinorLocator, MultipleLocator)
-
+from scipy.stats import skewnorm
+import time
 # code for updating bats
 #TODO: young maturation in to population
 
@@ -29,7 +26,8 @@ def initialize_bats(simulation_parameters):
             'energy_next': np.zeros(n), # used to make foraging decisions, energy gained in the next step if continuing foraging in current patch
             'energy_cp': np.zeros(n),  # energy gained from current patch
             'energy_cr': np.zeros(n),  # energy gained from current roost
-            'e_discount':0.05, # discount rate for energy gained by staying in the same patch (used to simulate need for diversity in diet)
+            'e_discount_ob':0.005, # discount rate for energy gained by staying in the same patch (used to simulate need for diversity in diet)
+            'e_discount_tp': 0.005,
             'fr': 29.16666667*np.ones((n,sim_len)),  #foraging rate in g/hr
             'fc': 17,  #food to energy conversion in kJ/g
             'mr': (146.16/2)*np.ones((n,sim_len)),  # Guess for metabolic rate
@@ -45,6 +43,7 @@ def initialize_bats(simulation_parameters):
             'th': np.zeros((n, sim_len)),# total history of locations of each bat across the simulation
             'fh': [], #foraging history, assigned later in initialization
             'roost_locs': np.zeros(n), # current roost of each bat in the population
+            'roost_locs_ind':np.zeros(n),# current roost index of each bat in the population
             'max_dist_in_hr': 30.0*np.ones((n, sim_len)), #GUESS: average speed of 30 km per hour
             'max_food_before_roost': 29.16666667*11.5*5, #GUESS: maximum amount off food bats with pups collect before returning to roost
             'food_before_roost': np.zeros(n), # keeps track of how much food bats have collected/consumed before roosting
@@ -58,7 +57,8 @@ def initialize_bats(simulation_parameters):
             'visits_per_patch': np.zeros((n,simulation_parameters['num_p'])), #for each bat, records number of times each patch was cisited
             'roost_each_day': np.zeros((n, int(sim_len/24))), # records chosen roosts for each bat each day
             'd_th': -1000.0,  #Guess: starvation threshold that leads to death
-            'max_energy': 5000 #Guess: maximum energy level of bats
+            'max_energy': 5000, #Guess: maximum energy level of bats
+            'patch_pref': simulation_parameters['patch_pref']
             }
 
     # functions for assigning initial values
@@ -138,12 +138,15 @@ def assign_bats_to_roost():
     global bats
     roost_options = patches.get_patch_type_ids('Roost')
     bats['roost_options']=np.array(roost_options)
+    bats['roost_locs_ind'] = np.zeros(bats['sp']['pop'])
     if len(roost_options)==1:
         bats['roost_locs'] = roost_options*np.ones(bats['sp']['pop'])
     else:
         bats['roost_locs'] = np.array(random.choices(roost_options, k=bats['sp']['pop']))
+        for r in range(len(roost_options)):
+            bats['roost_locs_ind'][np.where(bats['roost_locs']==roost_options[r])] = r
 
-    bats['roost_locs']= bats['roost_locs'].astype(float)
+    bats['roost_locs']= bats['roost_locs'].astype(int)
     bats['loc'] = np.copy(bats['roost_locs']) #bats start the simulation in the roosts
     bats['th'][:, 0] = np.copy(bats['roost_locs']) # updating the total history
     bats['roost_each_day'][:,0]= np.copy(bats['roost_locs']) #updating the roosting history
@@ -197,7 +200,8 @@ def update_bats(t):
     else: # otherwise continue what  you were doing
         continue_on(t)
     # update step for the disease
-    update_disease(t)
+    #update_disease(t)
+
 
 def update_disease(t):
     #update function for the disease
@@ -207,6 +211,7 @@ def update_disease(t):
     #get locations of sick bats
     sick_locs = bats['loc'][sick_ind]
     # determine which bats are in the same locations as the sick bats
+    #bats_in_sick_locs = [bats['id'][i] for i in range(len(bats['loc'])) if bats['loc'][i] in np.unique(sick_locs)]
     bats_in_sick_locs = []
     for i in np.unique(sick_locs):
         bats_in_sick_locs+=list(bats['id'][np.where(bats['loc']==i)])
@@ -234,15 +239,14 @@ def check_dead(t):
     #for bats that died, remove from simulation
     if len(dead)>0:
         bats['states'][dead] = 4
-        bats['energy'][dead,t:] = np.nan
-        bats['loc'][dead] = np.nan
-        bats['next_loc'][dead] = np.nan
-        bats['prev_loc'][dead] = np.nan
-        bats['next_state'][dead] = np.nan
-        bats['time_to_roost'][dead]= np.nan
-        bats['dnp'][dead]= np.nan
-        bats['th'][dead,t:]= np.nan
-        bats['roost_locs'][dead]=np.nan
+        bats['energy'][dead,t:] = 0
+        bats['loc'][dead] = 0
+        bats['next_loc'][dead] = 0
+        bats['prev_loc'][dead] = 0
+        bats['next_state'][dead] = 0
+        bats['time_to_roost'][dead]= 0
+        bats['dnp'][dead]=0
+        bats['th'][dead,t:]= 0
 
 def time_to_roost(t):
     global bats
@@ -259,27 +263,50 @@ def time_to_roost(t):
     travel_locs[np.where(travel_locs == bats['sp']['num_p'])] = nl[np.where(travel_locs == bats['sp']['num_p'])]
 
     # calculate E^* for each bat and each roost option
-    estars=np.zeros((len(not_dead),len(bats['roost_options'])))
-    count=0
-    for i in bats['roost_options']:# for each of the roost options
-        # calculate travel times between roost i and current locations of bats
-        tts= np.array([patches.get_time_to_next_patch(p,i) for p in travel_locs])
-        # calculate E^* for decision making
-        estars[:,count] =(bats['energy_cr'][not_dead] - bats['tc'][not_dead]*tts)/(bats['tr'][not_dead] + tts)
-        # ignore the bats that already roost here
-        estars[np.where(bats['roost_locs'][not_dead] == i), count] = -np.inf
-        count=count+1
+    tts=[]
+    [tts.append(patches.patches['tbp'][bats['roost_options'][i].astype(int),travel_locs.astype(int)]) for i in range(len(bats['roost_options']))]
+    tts = np.array(tts)
+    temp =[]
+    [temp.append((bats['energy_cr'][not_dead] - bats['tc'][not_dead]*tts[i,:])/(bats['tr'][not_dead] + tts[i,:])) for i in range(len(bats['roost_options']))]
+    estars = np.array(temp).transpose()
+    for i in range(len(estars)):
+        estars[i,int(bats['roost_locs_ind'][i])] = -np.inf
+    #count=0
+    #for i in bats['roost_options']:# for each of the roost options
+    #    # calculate travel times between roost i and current locations of bats
+    #    tts= np.array([patches.get_time_to_next_patch(p,i) for p in travel_locs])
+    #    # calculate E^* for decision making
+    #    estars[:,count] =(bats['energy_cr'][not_dead] - bats['tc'][not_dead]*tts)/(bats['tr'][not_dead] + tts)
+    #    # ignore the bats that already roost here
+    #    estars[np.where(bats['roost_locs'][not_dead] == i), count] = -np.inf
+    #    count=count+1
 
+    energy_next = bats['energy_next'][not_dead]
+    valid_roosts = estars > energy_next[:, np.newaxis]
+    # Get indices of valid roosts
+    indices = [np.where(valid_roosts[i])[0] for i in range(valid_roosts.shape[0])]
+
+    # Filter out bats with no valid roosts
+    valid_bats = [not_dead[i] for i in range(len(indices)) if len(indices[i]) > 0]
+    chosen_roosts = [np.random.choice(indices[i]) for i in range(len(indices)) if len(indices[i]) > 0]
+
+    # Update bats' information
+    bats['roost_locs'][valid_bats] = bats['roost_options'][chosen_roosts]
+    bats['roost_locs_ind'][valid_bats] = chosen_roosts
+    bats['tr'][valid_bats] = 0
+    bats['energy_cr'][valid_bats] = 0
 
     #for each bat
-    for b in not_dead:
-        temp = np.where(estars[b,:] > bats['energy_next'][b])[0]
-        #if  E* > E'[t+1] anywhere
-        if len(temp)>0:
-            #choose a new roost from available options
-            bats['roost_locs'][b] = bats['roost_options'][random.choice(temp)]
-            bats['tr'][b] = 0
-            bats['energy_cr'][b] = 0
+    #for b in not_dead:
+    #    temp = np.where(estars[b,:] > bats['energy_next'][b])[0]
+    #    #if  E* > E'[t+1] anywhere
+    #    if len(temp)>0:
+    #        #choose a new roost from available options
+    #        rc = random.choice(temp)
+    #        bats['roost_locs'][b] = bats['roost_options'][rc]
+    #        bats['roost_locs_ind'][b] = rc
+    #        bats['tr'][b] = 0
+    #        bats['energy_cr'][b] = 0
 
     #update location to move to
     bats['next_loc'][not_dead] = bats['roost_locs'][not_dead].copy()
@@ -375,9 +402,13 @@ def forage(b_arr,t):
     all_fr = 2*bats['fr'][b_arr,t]/(1+0.25**(-bats['energy'][b_arr, t - 1]/bats['max_energy']))
     #bats collect resources in foraging location based calculated fr above and available resources
     foraged_rec = np.array([min([all_fr[i], avail_rec[i]]) for i in range(len(b_arr))])
+    # add stochasticity to foraged rec - maximum will be foraged_rec
+    if bats['sp']['stochastic_foraging']:
+        #random = skewnorm.rvs(a = skewness,loc=maxValue, size=numValues)  #Skewnorm function
+        foraged_rec = np.array([skewnorm.rvs(a = -5,loc=f, size=1) for f in foraged_rec]).reshape(len(b_arr))
 
     #update the energy and energy related values of the bats based on collected resources
-    e_temp = rec_conv * (foraged_rec* bats['fc']) * np.exp(-bats['e_discount'] * bats['tp'][b_arr] - bats['e_discount'] * other_bats_in_loc) - bats['mr'][b_arr, t]
+    e_temp = rec_conv * (foraged_rec* bats['fc']) * np.exp(-bats['e_discount_tp'] * bats['tp'][b_arr] - bats['e_discount_ob'] * other_bats_in_loc) - bats['mr'][b_arr, t]
     bats['energy_cp'][b_arr] += e_temp
     bats['energy_cr'][b_arr] += e_temp
     bats['energy'][b_arr, t] = bats['energy'][b_arr, t - 1] + e_temp
@@ -390,10 +421,11 @@ def forage(b_arr,t):
     avail_rec_next = patches.get_patch_resources(locs)
     foraged_rec_next = np.array([min([all_fr[i], avail_rec_next[i]]) for i in range(len(b_arr))])
     next_e_temp = rec_conv * (foraged_rec_next * bats['fc']) * np.exp(
-        -bats['e_discount'] * bats['tp'][b_arr] - bats['e_discount'] * other_bats_in_loc) - bats['mr'][b_arr, t]
+        -bats['e_discount_tp'] * bats['tp'][b_arr] - bats['e_discount_ob'] * other_bats_in_loc) - bats['mr'][b_arr, t]
 
     bats['tp'][b_arr] += 1
     bats['energy_next'][b_arr] = next_e_temp
+
     #decide to stay  or move in next time step
     make_decisions(b_arr, next_e_temp, t)
 
@@ -403,7 +435,6 @@ def make_decisions(b_arr,next_e_temp,t):
     # check if the bats will forage in the next step or if it will be time to head to the roost based on their distance from the roost
     can_forage = b_arr[np.where(bats['time_to_roost'][b_arr]<=((24-t)%24)-1)]
     go_home = b_arr[np.where(bats['time_to_roost'][b_arr] >= ((24 - t) % 24) - 1)]
-
     cf_ind = np.where(bats['time_to_roost'][b_arr] <= ((24 - t) % 24) - 1)
 
     #check if bats need to feed young
@@ -411,62 +442,85 @@ def make_decisions(b_arr,next_e_temp,t):
     nmf_ind = np.where(bats['food_before_roost'][b_arr] *bats['young_state'][b_arr,t] < bats['max_food_before_roost'])
     max_food = b_arr[np.where(bats['food_before_roost'][b_arr] *bats['young_state'][b_arr,t] >= bats['max_food_before_roost'])]
     keep_foraging = np.intersect1d(not_max_food, can_forage)
-    kf_ind = np.intersect1d(cf_ind, nmf_ind)
+    kf_ind = np.intersect1d(cf_ind, nmf_ind) #keep foraging
     feed_young = np.intersect1d(max_food, can_forage)
-
 
     #for bats that will continue foraging, make Optimal Foraging Theory decision
     if len(keep_foraging)>0:
         estars = get_estars(keep_foraging, t)
         max_estars = np.max(estars,1)
         if_switch = max_estars-next_e_temp[kf_ind]
-        to_switch=keep_foraging[np.where(if_switch>0)]
+        to_switch_ind = np.where(if_switch>0) #array indices of b_arr
+        to_switch=keep_foraging[to_switch_ind]
+
         if len(to_switch)>0:
-            estar_switch =estars[np.where(if_switch>0),:]-next_e_temp[np.where(if_switch>0)].reshape((len(to_switch),1))
+            #dimensionns are (num_bats, num_patches)
+            estar_switch =estars[to_switch_ind ,:]-next_e_temp[to_switch_ind].reshape((len(to_switch),1))
             estar_switch = estar_switch.reshape((len(to_switch),bats['sp']['num_p']))
-            p_options=[]
-            for k in range(len(to_switch)):
-                #options for bat
-                temp=np.where(estar_switch[k,:]>0)[0]
-                if len(temp)>0 and np.max(patches.patches['resources'][temp])>0:
-                    #resources in options
-                    p_op_rec=patches.patches['resources'][temp]
+            switch_probs = np.ones((len(to_switch),bats['sp']['num_p']))
+            switch_probs[np.where(estar_switch<=0)] = 0
 
-                    #num visits to options
-                    p_op_vis=bats['visits_per_patch'][to_switch[k],temp]
+            #temp_idx = np.where(estar_switch>0)
+            #temp = temp_idx[1] #the patch indices
+            #bats_to_process = temp_idx[0] #the bat indices from to_switch
 
-                    #options in smell dist
-                    p_op_smell=patches.get_patches_in_smell_range(temp, bats['loc'][to_switch[k]])
+            resources = patches.patches['resources']#[temp] #repeats
+            p_op_vis = bats['visits_per_patch'][to_switch_ind]#[bats_to_process, temp]
 
-                    #get_probs
-                    w_temp = p_op_rec/sum(p_op_rec)
-                    w_temp[np.where(p_op_vis > 0)] = w_temp[np.where(p_op_vis > 0)] * p_op_vis[np.where(p_op_vis > 0)]
-                    w_temp[np.where(p_op_smell > 0)] = w_temp[np.where(p_op_smell > 0)] * 10
-                    w_temp = w_temp/sum(w_temp)
-                    p_choice = random.choices(temp, weights=w_temp, k=1).pop()
-                    # to visualize patch choice
-                    #test = np.zeros(20*20)
-                    #test[temp] = w_temp
-                    #plt.imshow(test.reshape(20,20))
-                    #plt.colorbar()
-                    bats['visits_per_patch'][to_switch[k], p_choice] += 1
-                    change_patch(to_switch[k], p_choice,t)
+            if bats['sp']['bat_type'] == 0:
+                p_op_smell = patches.get_patches_in_smell_range(np.arange(bats['sp']['num_p']), bats['loc'][to_switch_ind])
+
+            if bats['sp']['bat_type'] == 1:
+                edge = patches.patches['forest_edge']#[temp]
+                water = patches.patches['water_prox']#[temp]
+
+            w_temp = switch_probs*resources
+            w_temp[p_op_vis > 0] *= p_op_vis[p_op_vis > 0]
+
+            if bats['sp']['bat_type'] == 0:
+                w_temp[p_op_smell > 0] *= 10
+            else:
+                w_temp[edge] *= 2
+                w_temp[water] *= 2
+
+            #patch type preference
+            if len(bats['patch_pref'])>0:
+                for p in bats['patch_pref']:
+                    w_temp[:,np.where(patches.patches['patch_type_numerical'] == p)] *= 2
+            #avoid crowding
+            b_per_p = get_bats_in_patch()
+            w_temp = w_temp*np.exp(-b_per_p/10)
+
+            choices = bats['loc'][to_switch]
+            for b in range(len(to_switch)):
+                if sum(w_temp[b,:])>0:
+                    w_temp_b = w_temp[b,:]/np.sum(w_temp[b,:])
+                    choices[b]=random.choices(np.arange(bats['sp']['num_p']), weights=w_temp_b.ravel(), k=1)[0]
+
+            bats['visits_per_patch'][to_switch, choices.astype(int)] += 1
+            change_patch(to_switch, choices, t)
+
+
+
+
     if len(feed_young)>0:
         travel_to_roost_feed_young(feed_young, t)
     if len(go_home)>0:
         travel_to_roost(go_home,t)
 
-def change_patch(b_id, new_loc,t):
+def change_patch(b_ids, new_locs,t):
     #update steps when the decision is made to go to a new foraging patch
     global bats
-    loc = bats['loc'][b_id]
-    bats['dnp'][b_id] = patches.get_time_to_next_patch(loc, new_loc)
-    bats['dist_traveled'][b_id, t] += bats['dnp'][b_id] * bats['avg_speed']
-    bats['states'][b_id] = 2
-    bats['next_loc'][b_id] = new_loc
-    bats['loc'][b_id] = bats['sp']['num_p']
-    bats['tp'][b_id] = 0
-    bats['time_to_roost'][b_id] = patches.get_time_to_next_patch(new_loc, bats['roost_locs'][b_id])
+    loc = bats['loc'][b_ids]
+    bats['dnp'][b_ids] = patches.patches['tbp'][loc.astype(int),new_locs.astype(int)]
+    #patches.get_time_to_next_patch(loc, new_loc)
+    bats['dist_traveled'][b_ids, t] += bats['dnp'][b_ids] * bats['avg_speed']
+    bats['states'][b_ids] = 2
+    bats['next_loc'][b_ids] = new_locs
+    bats['loc'][b_ids] = bats['sp']['num_p']
+    bats['tp'][b_ids] = 0
+    bats['time_to_roost'][b_ids] = patches.patches['tbp'][new_locs.astype(int),bats['roost_locs'][b_ids].astype(int)]
+    #patches.get_time_to_next_patch(new_locs, bats['roost_locs'][b_ids])
 
 
 def travel_to_roost(b_id, t):
@@ -503,6 +557,8 @@ def feed_young(b_id, t):
         bats['states'][b_ids] = 2
         bats['next_state'][b_ids] = 1
         # go back to foraging -- if needed
+
+
         for k in range(len(b_ids)):
             # resources in options
             p_op_rec = patches.patches['resources']
@@ -531,23 +587,24 @@ def get_estars(b_arr,t):
     #calculates the E^* values for making patch switching decisions based on OFT
     global bats
     locs = bats['loc'][b_arr]
-    energy = bats['energy_cp'][b_arr].reshape((len(b_arr),1))* np.ones((1, bats['sp']['num_p']))
-    time_in_cur_patch = bats['tp'][b_arr].reshape((len(b_arr),1))* np.ones((1, bats['sp']['num_p']))
+    energy = np.matmul(bats['energy_cp'][b_arr].reshape((len(b_arr),1)),np.ones((1, bats['sp']['num_p'])))
+    time_in_cur_patch = bats['tp'][b_arr].reshape((len(b_arr),1))*np.ones((1, bats['sp']['num_p']))
     t_all_p=patches.patches['tbp'][locs.astype(int),:]
-    tc = bats['tc'][b_arr].reshape((len(b_arr), 1)) * np.ones((1, bats['sp']['num_p']))*t_all_p
+    tc = bats['tc'][b_arr].reshape((len(b_arr), 1))*np.ones((1, bats['sp']['num_p']))*t_all_p
     estars = (energy - tc)/(t_all_p + time_in_cur_patch)
-    estars[:, locs.astype(int)] = -np.inf
+    estars[np.arange(len(b_arr)),locs] = -np.inf
     return estars
 
 
-def get_p_patches(rec_prob,b_id):  # get patch to start foraging in. Later patches chosen based on MVT
+def get_p_patches(rec_prob,b_ids):  # get patch to start foraging in. Later patches chosen based on MVT
     global bats
     #factor in previous visits to patches with resources
-    fh = bats['fh'][b_id,:]
-    patch_prob=rec_prob.copy()
-    visit_patch =np.array([len(fh[np.where(fh==i)]) for i in range(bats['sp']['num_p'])])
+    #fh = bats['fh'][b_ids,:]
+    patch_prob=np.matmul(np.ones((len(b_ids),1)),rec_prob.reshape(1,bats['sp']['num_p']))
+    #visit_patch =np.array([len(fh[np.where(fh==i)]) for i in range(bats['sp']['num_p'])])
+    visit_patch = bats['visits_per_patch'][b_ids]
     temp=patch_prob[np.where(visit_patch>0)]*visit_patch[np.where(visit_patch>0)]
-    patch_prob[np.where(visit_patch>0)] =temp
+    patch_prob[np.where(visit_patch>0)]=temp
     #factor in aversion to other bats
     b_per_p = get_bats_in_patch()
     patch_prob = patch_prob*(1-(1/bats['sp']['pop'])*b_per_p)
@@ -560,7 +617,8 @@ def get_bats_in_patch():
     bats_per_patch = np.zeros(bats['sp']['num_p'])
     patches_w_bats = np.unique(bats['loc']).astype(int)
     for p in patches_w_bats:
-        bats_per_patch[p] = len(np.where(bats['loc']==p)[0])
+        if p<bats['sp']['num_p']:
+            bats_per_patch[p] = len(np.where(bats['loc']==p)[0])
 
     return bats_per_patch
 
@@ -570,24 +628,33 @@ def time_to_forage(t):
     not_dead = bats['id'][np.where(bats['states']!=4)]
     patch_rec = patches.patches['resources']
     rec_prob = patch_rec / sum(patch_rec)
-    choices = np.zeros(bats['sp']['pop'])
-    dists = np.zeros(bats['sp']['pop'])
-    d_r = np.zeros(bats['sp']['pop'])
-    for b_id in not_dead:
-        patch_probs = get_p_patches(rec_prob,b_id)
-        choice = random.choices(np.arange(bats['sp']['num_p']),weights=patch_probs, k=1).pop()
-        bats['visits_per_patch'][b_id, choice] +=1
-        dists[b_id] = patches.get_time_to_next_patch(int(bats['roost_locs'][b_id]), choice)
-        choices[b_id]=int(choice)
-        d_r[b_id] = dists[b_id].copy()
-        bats['time_to_roost'][b_id] = patches.get_time_to_next_patch(choice, bats['roost_locs'][b_id])
+    choices = np.zeros(len(not_dead))
+    dists = np.zeros(len(not_dead))
+    d_r = np.zeros(len(not_dead))
+    patch_probs = get_p_patches(rec_prob, not_dead) #needs to be len(not_dead)x num_p
+    choices = np.matmul(np.ones((len(not_dead), 1)), np.arange(bats['sp']['num_p']).reshape(1, bats['sp']['num_p']))
+    rng = np.random.default_rng()
+    choice = rng.choice(choices.flatten(),len(not_dead),patch_probs.flatten)
+    bats['visits_per_patch'][not_dead, choice.astype(int)] += 1
+    dists = patches.patches['tbp'][bats['roost_locs'][not_dead].astype(int), choice.astype(int)]
+    d_r= dists.copy()
+    bats['time_to_roost'][not_dead] = dists
+    # TODO: remove loop
+    #for b_id in not_dead:
+    #    patch_probs = get_p_patches(rec_prob,b_id)
+    #    choice = random.choices(np.arange(bats['sp']['num_p']),weights=patch_probs, k=1).pop()
+    #    bats['visits_per_patch'][b_id, choice] +=1
+    #    dists[b_id] = patches.get_time_to_next_patch(int(bats['roost_locs'][b_id]), choice)
+    #    choices[b_id]=int(choice)
+    #    d_r[b_id] = dists[b_id].copy()
+    #    bats['time_to_roost'][b_id] = patches.get_time_to_next_patch(choice, bats['roost_locs'][b_id])
 
-    bats['time_to_roost']=d_r
-    bats['dnp'] = dists
-    bats['next_loc']=choices
-    bats['loc']= bats['sp']['num_p']*np.ones(bats['sp']['pop'])
-    bats['next_state'] = np.ones(bats['sp']['pop'])
-    bats['states'] = 2*np.ones(bats['sp']['pop'])
+    bats['time_to_roost'][not_dead]=d_r
+    bats['dnp'][not_dead] = dists
+    bats['next_loc'][not_dead]=choice
+    bats['loc'][not_dead]= bats['sp']['num_p']*np.ones(len(not_dead))
+    bats['next_state'][not_dead] = np.ones(len(not_dead))
+    bats['states'][not_dead] = 2*np.ones(len(not_dead))
     travel(np.arange(bats['sp']['pop']), t)
 
 
@@ -634,19 +701,20 @@ def see_time_spent():
     plt.legend(['total', 'foraging'])
     plt.ylabel('Proportion of time spent in patch')
     plt.show()
-    print(foraging_places)
+    return foraging_places
 
-def get_bat_density_map(t,d):
+def get_bat_density_map(t,d,toplot):
     global bats
     bat_mat = np.zeros(bats['sp']['num_p'])
     for p in range(bats['sp']['num_p']):
         bat_mat[p]=len(bats['th'][:, t][np.where(bats['th'][:, t]==p)])
-    plt.title(str(t/24) + " Days")
-    plt.imshow(bat_mat.reshape((d[0],d[1])))
-    plt.colorbar()
-    plt.xticks([])
-    plt.yticks([])
-    plt.show()
+    if toplot:
+        plt.title(str(t/24) + " Days")
+        plt.imshow(bat_mat.reshape((d[0],d[1])))
+        plt.colorbar()
+        plt.xticks([])
+        plt.yticks([])
+        plt.show()
     return bat_mat
 
 def bat_on_grid_over_time(b_arr, d):
@@ -705,3 +773,18 @@ def see_individual_roosting_behavior(b_ids, roost_locs):
     plt.xlabel("Days")
     plt.yticks(np.arange(len(roost_locs)))
     plt.show()
+
+def get_average_foraging_changes_per_night():
+    global bats
+    nightly_switches = np.zeros((len(bats['id']), int(bats['sp']['sim_len']/24)+1))
+    for b in bats['id']:
+        temp = bats['th'][b, :]
+        count = 0
+        for t in range(len(temp)-1):
+            if (temp[t] not in bats['roost_options']) and (temp[t]!= bats['sp']['num_p']):
+                if temp[t] != temp[t-1]:
+                    nightly_switches[b,count] += 1
+            if t%24==0: #about to be done roosting
+                count += 1
+
+    return np.matmul(nightly_switches[:,1:],np.ones(int(bats['sp']['sim_len']/24))/int(bats['sp']['sim_len']/24))
